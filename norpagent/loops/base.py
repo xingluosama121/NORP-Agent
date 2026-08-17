@@ -54,5 +54,16 @@ class LoopRuntime(Protocol):
         """
         ...
 
+    # ── 可选扩展（非强制，引擎用 hasattr 探测）─────────────
+    def interrupt(self) -> None:
+        """请求取消全部在途 submit 任务（Ctrl+C / 引擎停止路径）。
+
+        默认实现置位每个任务的取消事件（contextvars 传递，见
+        norpagent.loops.cancel）：沙箱强杀子进程、模型流式中断、
+        任务执行体尽早退出。不等待任务真正结束。未实现时
+        引擎回退为仅等待任务自行超时。
+        """
+        ...
+
 
 __all__ = ["LoopRuntime"]

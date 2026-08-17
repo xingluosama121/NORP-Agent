@@ -125,6 +125,8 @@ class NorpEngine:
 
         默认实现 = kernel.agent.AgentRuntime；填地址 = 替换循环本体。
         工厂上下文按签名注入：registry / preset / ui / task_params。
+        agent_runtime 是 defer_factory 槽位：架构层只解析地址，
+        真正的工厂调用在这里发生（完整上下文就绪）。
         """
         runtime_slot = self.layer.get("agent_runtime")
         ui = None
@@ -132,6 +134,8 @@ class NorpEngine:
             ui = self.registry.resolve_ui(self.preset.ui)
         except Exception:  # noqa: BLE001 — 前端可能自带渲染器
             ui = None
+        subconfig_fn = getattr(self.layer, "subconfig", None)
+        sub_config = subconfig_fn("agent_runtime") if callable(subconfig_fn) else {}
         self._agent = call_factory(
             runtime_slot,
             {
@@ -140,7 +144,7 @@ class NorpEngine:
                 "ui": ui,
                 "task_params": self.params,
                 "layer": self.layer,
-                "config": {},
+                "config": sub_config,
             },
         )
 
@@ -162,6 +166,64 @@ class NorpEngine:
             lambda: agent.run(text, session_id=session_id, task_params=task_params)
         )
 
+    # ── 运行中热挂载（任何槽位均可替换） ─────────────────
+
+    def remount(self, **slot_values: Any) -> "NorpEngine":
+        """运行中热挂载：替换任意槽位实现，引擎保持 RUNNING。
+
+        用法::
+
+            np.remount(model="openai_compat")              # 换模型（下一次 run 生效）
+            np.remount(tools=["echo", "get_time"])         # 换工具集
+            np.remount(security="high")                    # 换安全级别
+            np.remount(frontend="...:ConsoleFrontend")     # 换前端
+            np.remount(async_loop="myapp.loop:create")     # 换事件循环
+            np.remount(model="myapp.model:create")         # 运行中替换模块文件
+
+        替换语义按槽位分组（详见 norpagent.runtime.remount）：
+
+        - 组件槽位（model / tools / hooks / security / plugins）：
+          重挂到注册表，下一次 run() 生效（Agent 循环每次 run
+          重新解析模型与工具 schema）；字符串地址先失效模块缓存，
+          因此「改模块文件 → remount」即热重载；
+        - 装配槽位（session / sandbox / scheduler / ui /
+          context_store / project_manager / agent_runtime / preset）：
+          AgentRuntime 热重建（停旧沙箱 → 建新运行时 → 前端重绑）；
+        - 基础设施槽位（frontend / async_loop）：停旧实现、启新实现；
+        - 基础服务槽位（logger / storage / error_handler）：更新引擎。
+
+        重复挂载的架构级订阅（钩子 / 安全 / 插件）会先退订再重挂，
+        不会叠加重复触发。
+        """
+        from norpagent.runtime.remount import remount_engine
+
+        if self.state is not EngineState.RUNNING:
+            raise EngineError(
+                f"热挂载需要引擎在运行状态（当前 {self.state.value}）"
+            )
+        return remount_engine(self, **slot_values)
+
+    def _swap_agent(self) -> None:
+        """热重建 Agent 运行时（装配槽位替换后）。
+
+        关闭旧运行时（释放沙箱 / 组件 / 退订渲染器）→ 按当前
+        架构层槽位构造新运行时 → 通知前端重绑（渲染器指向新
+        运行时，HTTP 服务不重启）。
+        """
+        old = self._agent
+        if old is not None:
+            try:
+                old.shutdown()
+            except Exception:  # noqa: BLE001
+                pass
+        self._build_agent()
+        rebind = getattr(self.frontend, "reattach_agent", None)
+        if callable(rebind):
+            try:
+                rebind(self)
+            except Exception:  # noqa: BLE001
+                pass
+
     def subscribe_ui(self, renderer: Any) -> None:
         """把渲染器订阅到事件总线（自动去重，避免重复输出）。"""
         on_event = getattr(renderer, "on_event", None)
@@ -182,6 +244,15 @@ class NorpEngine:
         if self.state in (EngineState.STOPPING, EngineState.STOPPED):
             return
         self._set_state(EngineState.STOPPING)
+        # 0. 取消全部在途任务：沙箱立即强杀子进程、模型流式循环
+        #    中断——让卡在阻塞 I/O 里的 submit 尽快返回
+        #    （Ctrl+C 可用性的核心：信号只到主线程，取消事件则人人可见）
+        interrupt = getattr(self.loop, "interrupt", None)
+        if callable(interrupt):
+            try:
+                interrupt()
+            except Exception:  # noqa: BLE001 — 取消失败不阻塞收尾
+                pass
         # 1. 前端停止（输入循环退出）
         try:
             self.frontend.stop()
@@ -196,10 +267,24 @@ class NorpEngine:
                 except Exception:  # noqa: BLE001
                     pass
 
-            if self.loop.is_running():
+            def _submit_close() -> None:
                 try:
                     self.loop.submit(_close)
-                except RuntimeError:
+                except Exception:  # noqa: BLE001 — 循环已停等
+                    _close()
+
+            if self.loop.is_running():
+                # 取消事件置位后任务会尽快退出；万一执行体仍卡在
+                # 不可中断的阻塞调用里，5s 后直接在当前线程关闭
+                # （守护工作池不会阻塞进程退出，这里防的是
+                #  request_stop 自身永久挂起）。
+                t = threading.Thread(
+                    target=_submit_close, daemon=True,
+                    name="norpagent-engine-close",
+                )
+                t.start()
+                t.join(timeout=5.0)
+                if t.is_alive():
                     _close()
             else:
                 _close()

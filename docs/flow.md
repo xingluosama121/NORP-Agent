@@ -95,7 +95,7 @@ WebUI 顶栏的「🧩 流程编排」按钮以全屏浮层内嵌这个独立分
 | 分组 | 来源 | 拖入画布生成的节点 |
 |---|---|---|
 | 模型（自动检测） | `registry.list_models()`，默认模型带 DEFAULT 标记 | `model` 节点（prompt / context / tools / **system_prompt** 输入） |
-| 工具（每工具独立钩子） | `registry.list_tools()` | `tool` 节点，**端口 = 该工具 schema 参数** |
+| 工具（每工具独立钩子） | `registry.list_tools()` | `tool` 节点，**端口 = 该工具 schema 参数**（卡上 `AGENT` 徽章 = 挂到 front 智能体，见第 9 节） |
 | 会话 | `registry.list_sessions()` | `session` 节点 |
 | 沙箱 | `registry.list_sandboxes()` | `sandbox` 节点 |
 | 调度器 | `registry.list_schedulers()` | `other` 节点（直通） |
@@ -237,7 +237,7 @@ WebUI 的设置面板看到的是同一份配置（互相跟进）；WebUI 设�
 
 同一文件内容重复拖入是幂等的（不会重复订阅钩子）。
 `.py` 插件的完整格式与 norpagent 插件完全一致（`PLUGIN_NAME`、
-`TOOLS`、`execute()`、15 个钩子函数），示例：
+`TOOLS`、`execute()`、生命周期钩子函数），示例：
 
 ```python
 """
@@ -316,7 +316,53 @@ def on_task_done(content, summary, ctx):   # 注册的钩子 → 画布上一个
 
 ---
 
-## 9. 运行与事件流
+## 9. 模块工具挂载到 front 智能体（自动调用）
+
+「文件即模块」注册的工具默认只参与画布流程。想让 **front 聊天里的
+智能体自动调用它们（tool calling）**，有两种等价方式：
+
+### 9.1 flow 页：工具卡「AGENT」开关
+
+底部模块坞「工具」分组的每张工具卡（原生 + 文件模块）右下角都有一个
+**`AGENT` / `+AGENT` 徽章**：
+
+- 点一下 = 挂载：工具进入智能体工具集，徽章变绿（`AGENT`），
+  状态提示「已挂载到智能体」；
+- 再点一下 = 卸载，徽章恢复灰色（`+AGENT`）；
+- 挂载 / 卸载经 `POST /api/agent/tools` 热应用：**下一次 front 聊天
+  立即生效**，无需重启或重开开关——模型可以直接调用该工具，
+  工具调用过程照常在聊天界面以「工具调用」事件展示。
+
+### 9.2 WebUI 设置：智能体工具清单
+
+front 主界面「设置」弹窗新增 **「🧰 智能体工具（Tool Calling）」** 区：
+
+- 列出注册表**全部工具**（原生 + 插件 / 文件即模块），每行 =
+  勾选框 + 工具名 + 描述 + 来源徽章（原生 / 模块）；
+- 勾选 = 挂载，取消 = 卸载，保存后立即生效；
+- 未勾选过 = **跟随预设默认集**（状态栏显示「跟随预设默认集」）；
+- 「恢复预设工具」一键回到预设默认集；
+- 文件模块卸载（文件不再加载）后，配置里残留的工具名会被自动
+  过滤，不会导致报错。
+
+### 9.3 语义与实现
+
+- 配置键：`agent_tools`（显式工具全集）+ `agent_tools_explicit`
+  （True = 显式；False / 空 = 跟随预设默认集）。挂载结果等于预设
+  默认集时自动回落为非显式（预设演进自动跟随）；
+- 生效方式：保存时把 `preset.tools` 热改写为「预设默认集 + 模块
+  工具」（或显式全集），下一次 `run()` 生成 tool schemas 即包含
+  模块工具，模型按 OpenAI function schema 自动调用；
+- 挂载不区分来源：原生工具、插件工具、「文件即模块」工具一视同仁；
+- 快照字段：`/api/flow/snapshot` 返回 `agent_tools`（当前生效集）与
+  `agent_base_tools`（预设默认集），flow 页据此渲染徽章状态；
+- 与「应用到智能体」开关的区别：开关 = 聊天任务整体改走画布流程；
+  工具挂载 = 常规 Agent 循环里把模块工具加入可调用工具集。两者
+  可以同时用（画布流程里也能挂工具给模型节点）。
+
+---
+
+## 10. 运行与事件流
 
 1. 在 **TR 卡片的输入框**里写 prompt（或选中 TR 节点在右侧编辑，两者同步）；
 2. 点击 **RUN** → 前端把 `{nodes, links, prompt}` 提交到
@@ -341,7 +387,7 @@ def on_task_done(content, summary, ctx):   # 注册的钩子 → 画布上一个
 
 ---
 
-## 10. 自动保存 / 应用到智能体（行为热切换）
+## 11. 自动保存 / 应用到智能体（行为热切换）
 
 **画布自动保存**：任何画布变化（增删节点 / 连线 / 改输入值 / 拖动
 位置 / 容器成员装卸 / 面板配置）都会在 **1.5 秒内自动保存到后端**
@@ -378,7 +424,7 @@ TR 卡片 prompt），落盘到 ``~/.norpagent/flow_graph.json``
 
 ---
 
-## 11. REST API 参考
+## 12. REST API 参考
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -391,6 +437,7 @@ TR 卡片 prompt），落盘到 ``~/.norpagent/flow_graph.json``
 | GET/POST | `/api/config` | 连接设置读写（api_key / api_base / project_root / flow_modules_dir / model，与 WebUI 共用） |
 | **GET** | **`/api/fe/config?fe_id=`** | **读取某 FE 的独立配置（无记录时返回全局配置副本）** |
 | **POST** | **`/api/fe/config`** | **保存某 FE 的独立配置 `{fe_id, config}` → `{ok, fe_id, config}`（原子落盘）** |
+| **POST** | **`/api/agent/tools`** | **智能体工具挂载 `{tools:[...], explicit:true}` → `{ok, agent_tools, explicit, dropped}`（与预设默认集一致自动回落非显式，未注册工具名自动丢弃）** |
 
 ### 后端内核（`norpagent.flows`）
 
@@ -411,7 +458,7 @@ result = runner.run(normalize_graph(saved))     # 保存格式 → 执行格式 
 
 ---
 
-## 12. 安全说明
+## 13. 安全说明
 
 - `/api/flow/register` 上传的 `.py` **会被执行**（注册为插件）。
   它复用与「插件目录」完全相同的安全管线（`plugin_security_audit`
@@ -425,7 +472,7 @@ result = runner.run(normalize_graph(saved))     # 保存格式 → 执行格式 
 
 ---
 
-## 13. 常见问题
+## 14. 常见问题
 
 **Q：页面打不开，显示「未检测到 norpagent 后端」？**
 离线模式已废除。请先启动 np() 后端，再从
@@ -506,3 +553,15 @@ beam 值 > 输入面板 > 节点配置 > 引擎预设参数，全空则不注入
 选择对应会话即可看到。流程本身的最终输出展示在 OUT 卡片控制台；
 「应用到智能体」开启时，聊天回复本身就是流程输出，且自动写入
 当前会话历史。
+
+**Q：拖入的 .py 工具怎么让 front 聊天里的智能体直接调用？**
+两条路任选：① `/flow` 模块坞工具卡右下角的 `+AGENT` 徽章点一下
+（变绿 `AGENT` = 已挂载）；② front 设置弹窗「🧰 智能体工具」清单
+里勾选该工具。挂载后下一次聊天即生效——模型按工具的 OpenAI
+schema 自动调用，无需画布流程。取消勾选 / 再点徽章即卸载。
+
+**Q：挂载的模块工具为什么不见了 / 报错？**
+模块文件若不再加载（文件被替换 / 未注册），`agent_tools` 配置里
+残留的工具名会被自动过滤，不会报错；重新注册后重新勾选即可。
+「恢复预设工具」可一键回到预设默认集（agent_tools 回落为非显式）。
+

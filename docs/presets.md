@@ -14,7 +14,7 @@
   `fts5` 上下文库 + `basic` 项目管理 + 17 项工具全集。
 - **工具全集**：文件读写删列、命令执行、联网检索、上下文管理、
   项目状态、任务提交/查询/取消、echo/get_time。
-- **行为参数**：`max_steps=128`、`call_timeout=600`、`task_timeout=0`。
+- **行为参数**：`max_steps=128`、`call_timeout=0`（不限时）、`task_timeout=0`。
 - **适用**：日常编码任务；叠加 `norpagent.safe(reg)` 即达生产安全姿态。
 
 ```python
@@ -59,8 +59,9 @@ assert result.ok
 
 ## 4. creative — 调试与创建自定义模式
 
-- **定位**：模式的「试验台」：复制 closest 内置模式 + 全套工具，
-  便于增减工具、调参、观察事件流。
+- **定位**：模式的「试验台」：固定使用 `mock` 模型 + 最小工具集
+  （`echo` / `get_time` / `run_python`），保证调试环境确定可复现，
+  便于观察事件流、调参、验证自定义模式文件。
 - **从文件加载**：`load_preset_file(path)` 加载模块级 `PRESET`
   变量（Preset 实例或 dict），CLI：`norpagent --mode-file my_mode.py`。
 - **注册**：`reg.register_preset(preset)`，之后与内置模式完全同权。

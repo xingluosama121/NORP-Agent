@@ -116,6 +116,24 @@ class Registry:
         with self._lock:
             self._presets[preset.name] = preset
 
+    def unregister_plugin(self, name: str) -> None:
+        """卸载插件：退订其钩子订阅、移除插件记录。
+
+        工具条目保留（工具注册表为名字覆盖语义，重挂载同名插件时
+        自然覆盖；移除旧工具名的历史条目不影响解析——不在预设
+        工具集内即不可达）。运行中热挂载 plugins 槽位时使用。
+        """
+        with self._lock:
+            plugin = self._plugins.get(name)
+            if plugin is None:
+                return
+            try:
+                for hook, fn in plugin.get_hooks().items():
+                    self.bus.unsubscribe(fn, hook)
+            except Exception:  # noqa: BLE001 — 单插件异常不阻塞卸载
+                pass
+            self._plugins.pop(name, None)
+
     def register_component(self, kind: str, name: str, factory: Callable[[], Any]) -> None:
         """注册一个通用组件：kind（种类，如 context_store）+ name + 工厂。
 

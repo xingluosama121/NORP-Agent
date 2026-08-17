@@ -43,6 +43,10 @@ class SlotSpec:
             工厂按需声明同名参数即可接收对应上下文。
         description: 槽位职责描述。
         examples: 用法示例（列表）。
+        defer_factory: True 表示该槽位的工厂**推迟到引擎装配期**调用
+            （registry / preset 上下文就绪后，由 NorpEngine._build_agent
+            按签名裁剪注入）；架构层 connect 时只解析地址、不实例化。
+            用于 agent_runtime 这类需要完整上下文的槽位。
     """
 
     name: str
@@ -52,6 +56,7 @@ class SlotSpec:
     string_semantics: str = "address"
     factory_kwargs: Dict[str, str] = field(default_factory=dict)
     examples: List[str] = field(default_factory=list)
+    defer_factory: bool = False
 
     def format_help(self) -> str:
         lines = [
@@ -107,6 +112,7 @@ _slot(SlotSpec(
         "具备 shutdown() 释放资源。"
     ),
     default_address=None,  # 默认逻辑 = kernel.agent.AgentRuntime
+    defer_factory=True,    # 工厂推迟到引擎装配期调用（需 registry/preset 上下文）
     factory_kwargs={
         "registry": "已装配的注册表",
         "preset": "解析后的预设对象",
@@ -260,6 +266,8 @@ _slot(SlotSpec(
         "np(frontend='norpagent.frontends.headless:HeadlessFrontend')  # 纯 API",
         "np(frontend='norpagent.frontends.console:ConsoleFrontend')    # 命令行",
         "np(frontend='myapp.my_ui:create')                             # 完全自定义",
+        "np(frontend='norpagent.frontends.web:WebFrontend;html=/path/to/my.html')"
+        "  # Web 前端 + 自定义主页面（槽位挂载参数，替换 / 路由页面）",
     ],
 ))
 
@@ -281,7 +289,7 @@ _slot(SlotSpec(
     name="preset",
     description="预设模式：一整套组件的开箱即用组合声明。",
     protocol="预设名（str，需已注册）或 Preset 实例。",
-    default_address=None,  # 默认逻辑 = 'minimal' 预设
+    default_address=None,  # 默认逻辑 = 'standard' 预设
     string_semantics="name",
     examples=[
         "np(preset='standard')                            # 标准模式",

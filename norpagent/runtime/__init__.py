@@ -116,6 +116,24 @@ def submit(text: str, session_id: Optional[str] = None) -> Any:
     return engine.submit(text, session_id=session_id)
 
 
+def remount(**slot_values: Any) -> NorpEngine:
+    """运行中热挂载：向当前引擎替换任意槽位实现（引擎保持运行）。
+
+    用法::
+
+        np.remount(model="openai_compat")     # 换模型（下一次 run 生效）
+        np.remount(tools=["echo"])            # 换工具集
+        np.remount(frontend="norpagent.frontends.headless:HeadlessFrontend")
+
+    槽位分组语义（组件 / 装配 / 基础设施 / 基础服务）见
+    norpagent.runtime.remount 模块文档；需已 np() 启动。
+    """
+    engine = _current
+    if engine is None:
+        raise EngineError("尚未启动：先调用 np() 或 norpagent.launch()")
+    return engine.remount(**slot_values)
+
+
 def shutdown() -> None:
     """显式停止当前引擎并清理（幂等）。"""
     global _current
@@ -141,6 +159,7 @@ __all__ = [
     "current",
     "stop",
     "submit",
+    "remount",
     "shutdown",
     "is_running",
     "NorpEngine",

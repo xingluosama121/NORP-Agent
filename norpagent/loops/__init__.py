@@ -11,6 +11,11 @@
 
 等价关系：``np.nasyncio(地址)`` 与 ``np(async_loop=地址)`` 完全等价，
 两者都走同一个架构槽位解析与工厂调用约定。
+
+取消语义：submit 任务内可用 ``cancel_requested()`` 检查是否被
+Ctrl+C / 引擎停止请求取消（contextvars 传递的取消事件），执行体
+应尽早自行退出（强杀子进程 / 中断流式读取）。详见
+norpagent.loops.cancel。
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from typing import Any, Optional
 from norpagent.arch.address import resolve_address
 from norpagent.arch.layer import call_factory
 from norpagent.loops.base import LoopRuntime
+from norpagent.loops.cancel import cancel_requested, current_cancel_event
 from norpagent.loops.std_asyncio import StdLoopRuntime
 
 
@@ -56,4 +62,11 @@ def nasyncio(address: Any = None, **config: Any) -> LoopRuntime:
 # 便捷引用：默认实现类直接可导入
 default = StdLoopRuntime
 
-__all__ = ["nasyncio", "LoopRuntime", "StdLoopRuntime", "default"]
+__all__ = [
+    "nasyncio",
+    "LoopRuntime",
+    "StdLoopRuntime",
+    "default",
+    "current_cancel_event",
+    "cancel_requested",
+]

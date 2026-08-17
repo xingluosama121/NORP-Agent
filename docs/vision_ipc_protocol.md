@@ -1,6 +1,10 @@
 # 视觉/操作外挂 —— IPC 传输层与会话层协议定义
 
 > 版本：v1.0（定稿）
+> **状态**：本协议对应的视觉/操作外挂能力（vision_ipc.py / vision_daemon.py /
+> capture_worker）**已在库化重构中从核心库剥离**，pyproject 的
+> `windows` extra 已预留位置，计划以可选插件形式回归。
+> 本文档保留作历史参考。
 > 关联：docs/vision_agent_design.md 第 3/4/12 节
 > 状态：消息格式沿用「XML 信封 + JSON 负载」（vision_ipc.py）；本文档定稿**传输层**与**会话层**，并扩展消息类型。
 > 自研约束：仅使用 Python 标准库（socket / threading / hmac / hashlib / secrets / xml.etree / json / ctypes），不引入任何第三方 IPC / 序列化库。

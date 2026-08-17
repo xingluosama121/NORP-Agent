@@ -37,6 +37,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from norpagent.loops.cancel import cancel_requested
 from norpagent.protocols.sandbox import SandboxResult
 
 _IS_WINDOWS = platform.system() == "Windows"
@@ -355,20 +356,25 @@ class IsolatedPythonRunner:
         final_output = ""
         final_error = ""
         timed_out = False
+        cancelled = False
         exit_code = 0
         try:
             while True:
+                # Ctrl+C / 引擎停止：取消事件置位 → 立即强杀子进程
+                if cancel_requested():
+                    cancelled = True
+                    _kill_child(proc)
+                    break
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     timed_out = True
                     _kill_child(proc)
                     break
                 try:
-                    line = lines.get(timeout=remaining)
+                    # 分片等待：取消请求最多 0.5s 内被响应
+                    line = lines.get(timeout=min(remaining, 0.5))
                 except queue.Empty:
-                    timed_out = True
-                    _kill_child(proc)
-                    break
+                    continue
                 if line is None:  # 子进程退出（stdout EOF）
                     break
                 line = line.strip()
@@ -412,6 +418,13 @@ class IsolatedPythonRunner:
             except Exception:
                 pass
 
+        if cancelled:
+            stderr = "".join(stderr_chunks)[-2000:].strip()
+            return SandboxResult(
+                stdout=final_output,
+                stderr=stderr or "任务已取消（Ctrl+C），PTC 子进程已终止",
+                exit_code=-1,
+            )
         if timed_out:
             stderr = "".join(stderr_chunks)[-2000:].strip()
             return SandboxResult(
@@ -420,7 +433,13 @@ class IsolatedPythonRunner:
                 exit_code=-1,
                 timed_out=True,
             )
-        exit_code = proc.wait()
+        try:
+            # 有界等待：子进程处于不可杀状态（如 D 状态）时
+            # 绝不允许永久阻塞工作线程
+            exit_code = proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _kill_child(proc)
+            exit_code = -1
         stderr = "".join(stderr_chunks).strip()
         if final_error:
             return SandboxResult(

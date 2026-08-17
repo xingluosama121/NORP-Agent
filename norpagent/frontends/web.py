@@ -12,6 +12,14 @@
     host         监听地址（默认 127.0.0.1）
     open_browser 是否自动打开浏览器（默认 False）
     language     界面语言（默认 "en"，如 "zh_CN"）
+    html         自定义主页面（槽位挂载参数）：文件路径或 HTML 内容
+                 （strip 后以 "<" 开头视为内容，否则视为文件路径；
+                  文件不存在时 WebUI 构造抛 ValueError）。替换 / 路由
+                  默认的 front.html，无需物理覆盖库文件。四种传入途径：
+                   1. 构造函数   WebFrontend(html="/path/to/my.html")
+                   2. 地址子句   np(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
+                   3. 配置字典   np(config={"web": {"html": "<html>...</html>"}})
+                   4. 运行时参数 np(html="/path/to/my.html")
 
 停止方式：页面「退出程序」按钮、np.stop() 轮询生命周期、
 或 np.shutdown() / 引擎 request_stop()。
@@ -20,7 +28,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from norpagent.frontends.base import Frontend
 
@@ -35,35 +43,55 @@ class WebFrontend:
         port: int = 8787,
         host: str = "127.0.0.1",
         open_browser: bool = False,
+        html: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
-        # 架构层工厂可能注入 config dict（如 np(config={"web": {...}})）
+        # 架构层工厂可能注入 config dict（如 np(config={"web": {...}}）
+        # 或地址子句 np(frontend="...:WebFrontend;html=...")）
         cfg = kwargs.get("config") or {}
         if isinstance(cfg, dict):
             port = cfg.get("port", port)
             host = cfg.get("host", host)
             open_browser = bool(cfg.get("open_browser", open_browser))
+            html = cfg.get("html", html)
         self.port = int(port)
         self.host = str(host)
         self.open_browser = bool(open_browser)
+        # 自定义主页面（None = 库内置 front.html）。
+        # 最终解析（内容 / 文件路径）在 WebUI 构造时进行：文件不存在
+        # 会抛 ValueError 快速失败，而不是静默回落默认页面。
+        self._html: Optional[str] = html if html else None
         self._engine: Optional[Any] = None
         self._ui: Optional[Any] = None
+        self._base_tools: List[str] = []  # 预设默认工具集快照
         self._gate = threading.Lock()
 
     def attach(self, engine: Any) -> None:
         from norpagent.builtin.ui.web import WebUI
 
         self._engine = engine
-        # 运行时参数透传（np(port=..., language=...) 等非槽位键）
+        # 预设默认工具集快照：agent_tools 非显式时的回退基准。
+        # 必须在任何 _apply_config 之前捕获（apply 会改写 preset.tools）。
+        agent = engine.agent
+        if agent is not None:
+            preset = getattr(agent, "preset", None)
+            if preset is not None:
+                self._base_tools = list(getattr(preset, "tools", ()) or ())
+        # 运行时参数透传（np(port=..., language=..., html=...) 等非槽位键）
         params: Dict[str, Any] = dict(getattr(engine, "params", None) or {})
         self.port = int(params.get("port", self.port))
         self.host = str(params.get("host", self.host))
         if "open_browser" in params:
             self.open_browser = bool(params["open_browser"])
         language = str(params.get("language") or "en")
+        # np(html=...) 透传优先于构造时配置（与 port/host 一致）。
+        # 值为空字符串视为未指定，回落构造值。
+        if params.get("html"):
+            self._html = str(params["html"])
 
         self._ui = WebUI(
             port=self.port, host=self.host, language=language,
+            html=self._html,
         )
         self._ui.set_handler(self._handle_task)
         self._ui.attach_runtime(engine.agent)
@@ -87,6 +115,38 @@ class WebFrontend:
             agent.ui = self._ui
             agent._ui_listener = self._ui.on_event
             engine._bus.subscribe(self._ui.on_event)
+        engine.subscribe_ui(self._ui)
+
+        # 启动即恢复持久化的智能体工具集（上次保存的 agent_tools 配置）
+        try:
+            saved = self._ui.get_config()
+            self._apply_agent_tools(saved or {})
+        except Exception:  # noqa: BLE001 — 恢复失败不阻塞启动
+            pass
+
+    def reattach_agent(self, engine: Any) -> None:
+        """运行中热挂载：AgentRuntime 热重建后重绑渲染器与数据源。
+
+        不重启 HTTP 服务（端口不变、页面不断连），只把 UI 的数据源
+        指向新运行时，并把人工审批 / 澄清提问等交互通道切到新运行时
+        的渲染器（ctx.ui）。
+        """
+        self._engine = engine
+        agent = getattr(engine, "agent", None)
+        if agent is None or self._ui is None:
+            return
+        # UI 数据源重绑（会话 REST / 插件列表 / 调试信息等读 agent）
+        self._ui.attach_runtime(agent)
+        # ctx.ui 指向本实例：审批 / 提问经 SSE 推送到浏览器
+        old_listener = getattr(agent, "_ui_listener", None)
+        if old_listener is not None and old_listener is not self._ui.on_event:
+            try:
+                engine._bus.unsubscribe(old_listener)
+            except Exception:  # noqa: BLE001
+                pass
+        agent.ui = self._ui
+        agent._ui_listener = self._ui.on_event
+        engine._bus.subscribe(self._ui.on_event)
         engine.subscribe_ui(self._ui)
 
     def _handle_task(self, prompt_text: str, session_id: Optional[str],
@@ -148,6 +208,9 @@ class WebFrontend:
                 except Exception:  # noqa: BLE001
                     pass
 
+        # ── 智能体工具集（文件即模块 → front 自动调用） ──
+        self._apply_agent_tools(cfg)
+
         # ── NORP 安全：开启时安装（一句话开启全套安全） ──
         if cfg.get("norp_safe_enabled") and getattr(reg, "security", None) is None:
             try:
@@ -169,6 +232,37 @@ class WebFrontend:
                 })
             except Exception:  # noqa: BLE001
                 pass
+
+    def _apply_agent_tools(self, cfg: Dict[str, Any]) -> None:
+        """把配置中的智能体工具集热应用到运行中的 agent。
+
+        - ``agent_tools_explicit`` 为 True：``agent_tools`` 即精确工具集
+          （未注册的工具名自动过滤，模块卸载后不会报错）；
+        - 否则回退为预设默认工具集（``self._base_tools`` 快照）。
+        下一次 run() 读取 preset.tools 生成 tool schemas，模型即可
+        自动调用（tool calling）。文件即模块注册的工具与原生工具
+        在这里被一视同仁地挂载。
+        """
+        engine = self._engine
+        if engine is None or not isinstance(cfg, dict):
+            return
+        agent = engine.agent
+        if agent is None:
+            return
+        preset = getattr(agent, "preset", None)
+        if preset is None:
+            return
+        try:
+            registered = set(engine.registry.list_tools())
+        except Exception:  # noqa: BLE001
+            registered = set()
+        if cfg.get("agent_tools_explicit"):
+            preset.tools = [
+                str(t) for t in (cfg.get("agent_tools") or [])
+                if str(t) in registered
+            ]
+        else:
+            preset.tools = list(self._base_tools)
 
     def start(self) -> None:
         if self._ui is not None:

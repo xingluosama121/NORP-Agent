@@ -24,6 +24,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Set
 
+from norpagent.loops.cancel import cancel_requested
 from norpagent.protocols.sandbox import SandboxResult
 
 _IS_WINDOWS = platform.system() == "Windows"
@@ -145,33 +146,55 @@ class PooledSandbox:
                 t.start()
 
             try:
-                exit_code = proc.wait(timeout=timeout)
+                # 分片等待：Ctrl+C / 引擎停止的取消事件置位后
+                # 最多 0.5s 内响应，立即强杀进程树。
+                # 注意：单个分片的 TimeoutExpired 只是「这一片到期」，
+                # 只有累计等待达到 timeout 才算真正超时。
+                cancelled = False
                 timed_out = False
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                # ★ 超时：强杀整个进程树，实例标记损坏不再复用
-                _kill_process_tree(proc)
-                self._broken = True
-                try:
-                    proc.wait(3)
-                except Exception:
-                    pass
-                exit_code = -1
-
-            # 进程已死，读取线程自然退出；短促等待收尾
-            for t, done in ((readers[0], done_out), (readers[1], done_err)):
-                if t.is_alive():
-                    done.wait(1.0)
-            for stream in (proc.stdout, proc.stderr):
-                try:
-                    if stream is not None:
-                        stream.close()
-                except Exception:
-                    pass
+                exit_code = 0
+                started = time.monotonic()
+                while True:
+                    if cancel_requested():
+                        _kill_process_tree(proc)
+                        self._broken = True
+                        cancelled = True
+                        exit_code = -1
+                        break
+                    remaining = timeout - (time.monotonic() - started)
+                    if remaining <= 0:
+                        timed_out = True
+                        # ★ 超时：强杀整个进程树，实例标记损坏不再复用
+                        _kill_process_tree(proc)
+                        self._broken = True
+                        try:
+                            proc.wait(3)
+                        except Exception:
+                            pass
+                        exit_code = -1
+                        break
+                    try:
+                        exit_code = proc.wait(timeout=min(remaining, 0.5))
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue  # 分片到期，继续下一片
+            finally:
+                # 进程已死，读取线程自然退出；短促等待收尾
+                for t, done in ((readers[0], done_out), (readers[1], done_err)):
+                    if t.is_alive():
+                        done.wait(1.0)
+                for stream in (proc.stdout, proc.stderr):
+                    try:
+                        if stream is not None:
+                            stream.close()
+                    except Exception:
+                        pass
 
             stdout = _robust_decode(b"".join(out_buf)).strip()
             stderr = _robust_decode(b"".join(err_buf)).strip()
-            if timed_out:
+            if cancelled:
+                stderr = stderr or "任务已取消（Ctrl+C），命令进程已终止"
+            elif timed_out:
                 stderr = stderr or f"命令超时({timeout}s)，进程树已强杀"
             elif exit_code != 0 and not stderr:
                 stderr = f"命令退出码 {exit_code}"

@@ -31,6 +31,7 @@ from norpagent.kernel.context import RunContext
 from norpagent.kernel.events import EventBus
 from norpagent.kernel.presets import Preset
 from norpagent.kernel.registry import ComponentError, Registry
+from norpagent.loops.cancel import cancel_requested, current_cancel_event
 from norpagent.protocols.model import ChatMessage, ModelUsage, ToolCallSpec
 from norpagent.protocols.tool import ToolResult, tool_error
 
@@ -169,6 +170,19 @@ class AgentRuntime:
         params = dict(self.params)
         if task_params:
             params.update(task_params)
+        # Ctrl+C / 引擎停止的取消事件注入 params：
+        # 模型流式循环（call_timeout=0 时同样生效）与工具经
+        # params["_cancel_event"] / cancel_requested() 检查并尽早退出。
+        cancel_event = params.get("_cancel_event")
+        if not isinstance(cancel_event, threading.Event):
+            cancel_event = current_cancel_event()
+        if isinstance(cancel_event, threading.Event):
+            params["_cancel_event"] = cancel_event
+        # 剔除已退出的超时孤儿线程引用，防止长期运行内存累积
+        if self._orphan_threads:
+            self._orphan_threads = [
+                t for t in self._orphan_threads if t.is_alive()
+            ]
         result = RunResult(task_id=task_id, preset_name=self.preset.name)
         start_ts = time.time()
 
@@ -264,6 +278,15 @@ class AgentRuntime:
         empty_streak = 0
         try:
             for step in range(1, max_steps + 1):
+                # Ctrl+C / 引擎停止：取消事件置位 → 本轮边界立即收尾
+                # （阻塞中的模型调用 / 沙箱命令由各自的取消检查中断）
+                if cancel_requested():
+                    result.status = "stopped"
+                    result.error = "任务被中断（Ctrl+C）"
+                    self.hooks.on_task_stopped.emit(
+                        task_id=task_id, reason=result.error,
+                    )
+                    break
                 if callable(stop_check):
                     try:
                         should_stop = bool(stop_check())
@@ -604,9 +627,13 @@ class AgentRuntime:
         """call_timeout 阻塞硬中断调度（详见 ModelCallTimeout）。"""
         call_timeout = float(params.get("call_timeout", 0) or 0)
         if call_timeout <= 0:
-            # 无超时要求：同步调用（零线程开销）
+            # 无超时要求：同步调用（零线程开销）。
+            # 取消事件（Ctrl+C / 引擎停止）仍然生效：模型流式循环
+            # 检查 _cancel_event 后尽快退出，不等 SDK 超时兜底。
+            cancel_ev = params.get("_cancel_event")
             return self._call_model_impl(
-                model_provider, history, tool_schemas, params, task_id, result, None
+                model_provider, history, tool_schemas, params, task_id, result,
+                cancel_ev if isinstance(cancel_ev, threading.Event) else None,
             )
 
         cancel_event = threading.Event()

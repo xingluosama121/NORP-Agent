@@ -2316,6 +2316,18 @@ body {
             <label for="cfg-native-confirm-exec" data-i18n="native_confirm_exec">命令/子进程执行需确认</label>
         </div>
 
+        <!-- 智能体工具（Tool Calling） -->
+        <h3 style="margin-top:12px;">🧰 <span data-i18n="agent_tools_title">智能体工具（Tool Calling）</span></h3>
+        <div id="agent-tools-section" style="margin-bottom:8px;">
+            <div class="checkbox-desc" data-i18n="agent_tools_desc">勾选哪些工具可被智能体在聊天中自动调用。通过「文件即模块」注册的第三方工具（拖入 /flow 画布的 .py 文件）也会出现在这里，勾选后无需画布流程即可直接调用。</div>
+            <div id="cfg-agent-tools-list" style="max-height:260px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:6px;padding:4px 6px;margin-top:6px;background:#fafafa;"></div>
+            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button class="btn-small" id="cfg-agent-tools-restore" data-i18n="agent_tools_restore" onclick="restoreAgentTools()">恢复预设工具</button>
+                <span id="cfg-agent-tools-status" style="font-size:11px;color:#888;"></span>
+            </div>
+        </div>
+        <!-- end 智能体工具 -->
+
         <label data-i18n="queue_limit">Event Queue Limit</label>
         <input type="number" id="cfg-queue-size" min="1" max="1024" value="200">
         <span id="queue-warning" style="display:none; color:#b8860b; font-size:11px;" data-i18n="queue_warning">Queue size over 300 may cause UI lag.</span>
@@ -2853,6 +2865,15 @@ var I18N = {
         "native_confirm_write": "写入/替换文件需确认",
         "native_confirm_delete": "删除文件需确认",
         "native_confirm_exec": "命令/子进程执行需确认",
+        "agent_tools_title": "智能体工具（Tool Calling）",
+        "agent_tools_desc": "勾选哪些工具可被智能体在聊天中自动调用。通过「文件即模块」注册的第三方工具（拖入 /flow 画布的 .py 文件）也会出现在这里，勾选后无需画布流程即可直接调用。",
+        "agent_tools_restore": "恢复预设工具",
+        "agent_tools_restored": "已恢复预设工具集",
+        "agent_tools_native": "原生",
+        "agent_tools_module": "模块",
+        "agent_tools_count": "个工具已启用",
+        "agent_tools_empty": "暂无可用工具",
+        "agent_tools_preset_follow": "跟随预设默认集",
         "plugin_approval_section": "🛡️ 插件工具调用审批",
         "plugin_approval_enabled": "启用插件工具调用审批（默认开启）",
         "plugin_approval_desc": "开启后，调用插件提供的工具前需人工确认。原生内置工具的确认请在「设置 → 原生工具确认」中配置。",
@@ -3190,6 +3211,15 @@ var I18N = {
         "native_confirm_write": "寫入/替換檔案需確認",
         "native_confirm_delete": "刪除檔案需確認",
         "native_confirm_exec": "命令/子進程執行需確認",
+        "agent_tools_title": "智能體工具（Tool Calling）",
+        "agent_tools_desc": "勾選哪些工具可被智能體在聊天中自動呼叫。通過「文件即模組」註冊的第三方工具（拖入 /flow 畫布的 .py 文件）也會出現在這裡，勾選後無需畫布流程即可直接呼叫。",
+        "agent_tools_restore": "恢復預設工具",
+        "agent_tools_restored": "已恢復預設工具集",
+        "agent_tools_native": "原生",
+        "agent_tools_module": "模組",
+        "agent_tools_count": "個工具已啟用",
+        "agent_tools_empty": "暫無可用工具",
+        "agent_tools_preset_follow": "跟隨預設默認集",
         "plugin_approval_section": "🛡️ 插件工具呼叫審批",
         "plugin_approval_enabled": "啟用插件工具呼叫審批（預設開啟）",
         "plugin_approval_desc": "開啟後，呼叫插件提供的工具前需人工確認。原生內建工具的確認請在「設定 → 原生工具確認」中配置。",
@@ -3528,6 +3558,15 @@ var I18N = {
         "native_confirm_write": "Confirm write/replace file",
         "native_confirm_delete": "Confirm delete file",
         "native_confirm_exec": "Confirm command/process execution",
+        "agent_tools_title": "Agent Tools (Tool Calling)",
+        "agent_tools_desc": "Check which tools the agent may call automatically during chat. Third-party tools registered via file-as-module (.py files dropped onto the /flow canvas) also appear here — tick them to enable direct tool calling without a canvas flow.",
+        "agent_tools_restore": "Restore preset tools",
+        "agent_tools_restored": "Preset tool set restored",
+        "agent_tools_native": "native",
+        "agent_tools_module": "module",
+        "agent_tools_count": "tool(s) enabled",
+        "agent_tools_empty": "No tools available",
+        "agent_tools_preset_follow": "following preset defaults",
         "plugin_approval_section": "🛡️ Plugin Tool Call Approval",
         "plugin_approval_enabled": "Enable plugin tool call approval (on by default)",
         "plugin_approval_desc": "When enabled, calls to plugin-provided tools require human approval. Native built-in tool confirmation is configured in Settings → Native Tool Confirmation.",
@@ -3865,6 +3904,15 @@ var I18N = {
         "native_confirm_write": "Подтверждать запись/замену файла",
         "native_confirm_delete": "Подтверждать удаление файла",
         "native_confirm_exec": "Подтверждать выполнение команд",
+        "agent_tools_title": "Инструменты агента (Tool Calling)",
+        "agent_tools_desc": "Отметьте, какие инструменты агент может вызывать автоматически в чате. Сторонние инструменты, зарегистрированные через «файл как модуль» (файлы .py, перетащенные на холст /flow), также отображаются здесь.",
+        "agent_tools_restore": "Восстановить инструменты пресета",
+        "agent_tools_restored": "Набор инструментов пресета восстановлен",
+        "agent_tools_native": "встроенные",
+        "agent_tools_module": "модуль",
+        "agent_tools_count": "инструмент(ов) включено",
+        "agent_tools_empty": "Нет доступных инструментов",
+        "agent_tools_preset_follow": "по умолчанию пресета",
         "plugin_approval_section": "🛡️ Одобрение вызовов инструментов плагинов",
         "plugin_approval_enabled": "Включить одобрение вызовов инструментов плагинов (по умолчанию)",
         "plugin_approval_desc": "При включении вызовы инструментов плагинов требуют подтверждения. Подтверждение встроенных инструментов настраивается в Настройки → Подтверждение встроенных инструментов.",
@@ -4202,6 +4250,15 @@ var I18N = {
         "native_confirm_write": "書き込み/置換を確認",
         "native_confirm_delete": "削除を確認",
         "native_confirm_exec": "コマンド実行を確認",
+        "agent_tools_title": "エージェントツール（Tool Calling）",
+        "agent_tools_desc": "チャット中にエージェントが自動呼び出しできるツールをチェックします。「ファイル即モジュール」で登録したサードパーティ製ツール（/flow キャンバスにドロップした .py ファイル）もここに表示されます。",
+        "agent_tools_restore": "プリセットツールを復元",
+        "agent_tools_restored": "プリセットツールセットを復元しました",
+        "agent_tools_native": "ネイティブ",
+        "agent_tools_module": "モジュール",
+        "agent_tools_count": "個のツールが有効",
+        "agent_tools_empty": "利用可能なツールがありません",
+        "agent_tools_preset_follow": "プリセット既定に追従",
         "plugin_approval_section": "🛡️ プラグインツール呼び出し承認",
         "plugin_approval_enabled": "プラグインツール呼び出し承認を有効化（デフォルト）",
         "plugin_approval_desc": "有効にすると、プラグイン提供ツールの呼び出し前に承認が必要です。ネイティブ組み込みツールの確認は「設定 → ネイティブツール確認」で設定します。",
@@ -7909,6 +7966,72 @@ function updateNativeConfirmVisibility() {
     });
 }
 
+// ── 智能体工具（Tool Calling）：注册表工具清单勾选 ──
+var _agentToolsExplicit = false;   // 是否按显式集合保存（false = 跟随预设默认）
+var _agentToolsModified = false;   // 本次打开设置后是否有勾选变动
+
+function renderAgentTools() {
+    var box = document.getElementById('cfg-agent-tools-list');
+    if (!box) return;
+    var info = (config && config.tools_info) || [];
+    var effective = (config && config.agent_effective_tools) || [];
+    if (!info.length) {
+        box.innerHTML = '<div style="font-size:11px;color:#888;padding:6px;" data-i18n="agent_tools_empty">暂无可用工具</div>';
+        updateAgentToolsStatus();
+        return;
+    }
+    var html = '';
+    info.forEach(function(tl) {
+        var on = effective.indexOf(tl.name) >= 0;
+        var src = tl.source === 'native'
+            ? '<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#eef2ff;color:#4f46e5;" data-i18n="agent_tools_native">原生</span>'
+            : '<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#ecfdf5;color:#059669;" data-i18n="agent_tools_module">模块</span>';
+        html += '<label style="display:flex;align-items:center;gap:6px;padding:4px 2px;font-size:12px;cursor:pointer;border-bottom:1px solid #f0f0f0;">' +
+            '<input type="checkbox" class="cfg-agent-tool" value="' + escapeHtml(tl.name) + '"' + (on ? ' checked' : '') + '>' +
+            '<span style="font-family:monospace;">' + escapeHtml(tl.name) + '</span>' +
+            '<span style="color:#999;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(tl.description || '') + '">' + escapeHtml(tl.description || '') + '</span>' +
+            src +
+        '</label>';
+    });
+    box.innerHTML = html;
+    Array.prototype.forEach.call(box.querySelectorAll('.cfg-agent-tool'), function(el) {
+        el.addEventListener('change', function() {
+            _agentToolsExplicit = true;
+            _agentToolsModified = true;
+            updateAgentToolsStatus();
+        });
+    });
+    updateAgentToolsStatus();
+}
+
+function updateAgentToolsStatus() {
+    var s = document.getElementById('cfg-agent-tools-status');
+    if (!s) return;
+    var n = Array.prototype.filter.call(
+        document.querySelectorAll('.cfg-agent-tool'), function(el) { return el.checked; }
+    ).length;
+    s.textContent = n + ' ' + t('agent_tools_count');
+    if (!_agentToolsExplicit) {
+        s.textContent += ' · ' + t('agent_tools_preset_follow');
+    }
+}
+
+function restoreAgentTools() {
+    // 恢复预设默认工具集：非显式保存（agent_tools=[] + explicit=false），
+    // 后端回落到预设默认集，后续预设演进自动跟随
+    var base = (config && config.agent_base_tools) || [];
+    _agentToolsExplicit = false;
+    _agentToolsModified = true;
+    var box = document.getElementById('cfg-agent-tools-list');
+    if (box) {
+        Array.prototype.forEach.call(box.querySelectorAll('.cfg-agent-tool'), function(el) {
+            el.checked = base.indexOf(el.value) >= 0;
+        });
+    }
+    updateAgentToolsStatus();
+    showToast(t('agent_tools_restored'));
+}
+
 async function openSettings() {
     try { config = await window.pywebview.api.get_config(); } catch(e) { config = {}; }
 
@@ -7987,6 +8110,11 @@ async function openSettings() {
     document.getElementById('cfg-vision-enabled').checked = config.vision_enabled === true;
     document.getElementById('cfg-vision-service-url').value = config.vision_service_url || '';
     updateVisionVisibility();
+
+    // Agent tools (tool calling)
+    _agentToolsExplicit = config.agent_tools_explicit === true;
+    _agentToolsModified = false;
+    renderAgentTools();
 
     updateQueueWarning();
     setLanguage(currentLang);
@@ -8105,9 +8233,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function saveSettings() {
     var modelVal = document.getElementById('cfg-model').value;
+    // 模型列表异步拉取尚未回填时（慢网络），保存不应被拦截：
+    // 空值回落当前配置模型（等价「留空 = 引擎默认」），显式 '.' 仍视为无效
     if (!modelVal || modelVal.trim() === '' || modelVal.trim() === '.') {
-        showToast(t('select_valid_model'));
-        return;
+        modelVal = (config && config.model) || '';
     }
     var newConfig = {
         language: document.getElementById('cfg-language').value,
@@ -8142,6 +8271,16 @@ async function saveSettings() {
         vision_enabled: document.getElementById('cfg-vision-enabled').checked,
         vision_service_url: document.getElementById('cfg-vision-service-url').value.trim(),
     };
+
+    // 智能体工具（仅在本次有勾选变动时写入，避免把预设默认集冻结为显式）
+    if (_agentToolsModified) {
+        var ticked = Array.prototype.map.call(
+            document.querySelectorAll('.cfg-agent-tool:checked'),
+            function(el) { return el.value; }
+        );
+        newConfig.agent_tools = _agentToolsExplicit ? ticked : [];
+        newConfig.agent_tools_explicit = _agentToolsExplicit;
+    }
 
     try {
         await window.pywebview.api.save_config(newConfig);
@@ -8225,6 +8364,11 @@ async function restoreDefaults() {
         document.getElementById('cfg-vision-enabled').checked = false;
         document.getElementById('cfg-vision-service-url').value = '';
         updateVisionVisibility();
+
+        // Agent tools reset：跟随预设默认集
+        _agentToolsExplicit = false;
+        _agentToolsModified = true;
+        renderAgentTools();
 
         updateThinkMutualExclusion();
         updateQueueWarning();

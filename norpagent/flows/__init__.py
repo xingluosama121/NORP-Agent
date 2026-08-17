@@ -265,9 +265,12 @@ def build_snapshot(registry: Any, agent: Any = None,
 
     preset_name = ""
     model_name = ""
+    agent_tools: List[str] = []
     if agent is not None:
         preset_name = getattr(getattr(agent, "preset", None), "name", "") or ""
         model_name = getattr(getattr(agent, "preset", None), "model", "") or ""
+        agent_tools = list(
+            getattr(getattr(agent, "preset", None), "tools", ()) or ())
     model_names = registry.list_models()
     default_model = model_name or (model_names[0] if model_names else "")
 
@@ -287,6 +290,7 @@ def build_snapshot(registry: Any, agent: Any = None,
         "engine_state": engine_state,
         "preset": preset_name,
         "default_model": default_model,
+        "agent_tools": agent_tools,
         "security": security,
         "workspace_root": workspace_root,
         "groups": {

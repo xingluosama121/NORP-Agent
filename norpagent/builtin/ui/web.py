@@ -11,7 +11,9 @@ Agent 的「界面」是可插拔的：本适配器实现 UIAdapter 协议，
 - ``notify``：非阻塞通知；
 - 页面：默认服务 front.html（多宿主前端，pywebview 桌面与浏览器
   双宿主共用，见 front_src/bridge.js）；资源缺失时回落到内置
-  简易页面；
+  简易页面；构造参数 ``html`` 可挂载自定义主页面（文件路径或
+  HTML 内容，strip 后以 "<" 开头视为内容），替换 / 路由默认页面，
+  无需物理覆盖库文件；
 - REST API（供 front.html 的浏览器桥使用）：
   /api/sessions 会话 CRUD、/api/config 配置、/api/models 模型、
   /api/plugins* 插件、/api/security 安全、/api/health 健康、
@@ -312,6 +314,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "plugin_network_domain_allowlist": [],
     "approval_enabled": True,
     "flow_modules_dir": "",               # 模块流程「文件即模块」落盘目录（空 = 默认 ~/.norpagent/flow_modules）
+    # front 智能体工具挂载（文件即模块 → 模型自动调用）：
+    "agent_tools": [],                    # 显式工具全集（explicit=True 时生效；空 + 非显式 = 预设默认集）
+    "agent_tools_explicit": False,        # True = agent_tools 为智能体的精确工具集（含空集）
     "_initialized": False,                # 是否完成过首次配置
 }
 
@@ -368,12 +373,18 @@ class WebUI:
         language: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
         config_path: Optional[str] = None,
+        html: Optional[str] = None,
     ) -> None:
         self.port = int(port)
         self.host = host
         self.ask_timeout = float(ask_timeout)
         self.history_limit = int(history_limit)
         self._language = language or "en"
+        # 自定义主页面（槽位挂载参数）：/ 路由的页面字节。
+        # 解析规则：None = 库内置 front.html；
+        #   strip 后以 "<" 开头 → 直接作为 HTML 内容；
+        #   否则 → 视为文件路径（不存在抛 ValueError，快速失败）。
+        self._html_override: Optional[bytes] = self._resolve_html(html)
         # 配置持久化路径：None 表示不落盘（纯内存，测试/嵌入式场景）
         self._config_path = (
             config_path if config_path is not None else _default_config_path()
@@ -388,6 +399,8 @@ class WebUI:
             self._config.update(config)
         self._handler_fn: Optional[Callable] = None
         self._agent: Any = None
+        # 预设默认工具集快照（attach_runtime 时捕获；agent_tools 回退基准）
+        self._agent_base_tools: List[str] = []
         self._config_apply: Optional[Callable[[Dict[str, Any]], None]] = None
         self._quit_callback: Optional[Callable[[], None]] = None
         self._engine_state_fn: Optional[Callable[[], str]] = None
@@ -428,6 +441,31 @@ class WebUI:
         self._thread: Optional[threading.Thread] = None
         self._closed = False
 
+    @staticmethod
+    def _resolve_html(html: Optional[str]) -> Optional[bytes]:
+        """解析 html 挂载参数为页面字节。
+
+        - None / 空 → 未挂载（None，回落库内置 front.html）；
+        - strip 后以 "<" 开头 → HTML 内容（UTF-8 编码）；
+        - 否则 → 文件路径：存在则读取内容；
+          不存在抛 ValueError（快速失败，不静默回落默认页面，
+          避免用户以为挂载生效、实际看到的还是内置页面）。
+        """
+        if html is None:
+            return None
+        src = str(html).strip()
+        if not src:
+            return None
+        if src.startswith("<"):
+            return src.encode("utf-8")
+        if not os.path.isfile(src):
+            raise ValueError(
+                f"WebUI html 挂载参数既不是 HTML 内容（以 '<' 开头）"
+                f"也不是存在的文件: {src!r}"
+            )
+        with open(src, "rb") as f:
+            return f.read()
+
     # ── 宿主集成 ────────────────────────────────────────
 
     def set_handler(self, fn: Callable) -> None:
@@ -441,6 +479,9 @@ class WebUI:
             preset = getattr(agent, "preset", None)
             if preset is not None and not self._config.get("model"):
                 self._config["model"] = getattr(preset, "model", "") or ""
+            # 预设默认工具集快照（agent_tools 非显式时的回退基准）
+            self._agent_base_tools = list(
+                getattr(preset, "tools", ()) or ())
             # np(workspace_root=...) 显式指定时覆盖平台默认工作区
             params = getattr(agent, "params", None) or {}
             if params.get("workspace_root"):
@@ -731,6 +772,9 @@ class WebUI:
                     self._json(200, ui.flow_register(
                         str(data.get("name") or ""),
                         str(data.get("content") or "")))
+                elif path == "/api/agent/tools":
+                    data = self._read_json()
+                    self._json(200, ui.set_agent_tools(data))
                 else:
                     self._json(404, {"error": "not found"})
 
@@ -860,7 +904,14 @@ class WebUI:
 
     def page_bytes(self, page: str = "front") -> bytes:
         """返回页面字节：front=主聊天界面（front.html），
-        flow=模块流程编排（norp-flow.html）。资源缺失时回落内置简易页面。"""
+        flow=模块流程编排（norp-flow.html）。资源缺失时回落内置简易页面。
+
+        front 页面优先返回 html 挂载参数指定的自定义内容
+        （文件路径或 HTML 内容，构造时已解析缓存），
+        未挂载时才读库内置 front.html。
+        """
+        if page == "front" and self._html_override is not None:
+            return self._html_override
         paths = {
             "front": _FRONT_HTML_PATH,
             "flow": _FLOW_HTML_PATH,
@@ -925,6 +976,7 @@ class WebUI:
             self._task_session[task_id] = sid
             if sid:
                 self._running_sessions[sid] = task_id
+            self._prune_tasks()
         self._publish({
             "type": "notify",
             "level": "info",
@@ -1004,6 +1056,25 @@ class WebUI:
                 runner.request_stop()
             except Exception:  # noqa: BLE001
                 pass
+
+    # 任务记录历史上限：长期运行的 WebUI 不能让 _tasks 无限增长
+    _TASKS_HISTORY_LIMIT = 200
+
+    def _prune_tasks(self) -> None:
+        """裁剪已完成的历史任务记录（须持锁调用）。
+
+        只删非 running 的最旧记录；运行中任务绝不裁剪，
+        保证 /api/tasks 状态查询与 SSE 补发不受影响。
+        """
+        if len(self._tasks) <= self._TASKS_HISTORY_LIMIT:
+            return
+        overflow = len(self._tasks) - self._TASKS_HISTORY_LIMIT
+        finished = [
+            tid for tid, rec in self._tasks.items()
+            if rec.get("status") != "running"
+        ]
+        for tid in finished[:overflow]:
+            self._tasks.pop(tid, None)
 
     @staticmethod
     def _invoke_handler(fn: Callable, prompt: str, session_id: str,
@@ -1246,7 +1317,92 @@ class WebUI:
             cfg = dict(self._config)
         cfg["has_api_key"] = bool(cfg.get("api_key")) or not self._needs_key()
         cfg["first_run"] = self.first_run()
+        # 工具挂载信息：注册表全部工具（原生 / 模块）+ 智能体当前生效集 + 预设默认集
+        cfg["tools_info"] = self.tools_info()
+        cfg["agent_effective_tools"] = self.agent_effective_tools()
+        cfg["agent_base_tools"] = list(self._agent_base_tools)
         return cfg
+
+    # ── 智能体工具挂载（文件即模块 → front 自动调用） ──
+
+    def agent_effective_tools(self) -> List[str]:
+        """front 智能体当前生效的工具集（preset.tools 已被 config apply 改写）。"""
+        agent = self._agent
+        preset = getattr(agent, "preset", None) if agent is not None else None
+        tools = getattr(preset, "tools", None) if preset is not None else None
+        if tools is None:
+            tools = list(self._agent_base_tools)
+        return [str(t) for t in tools]
+
+    def tools_info(self) -> List[Dict[str, Any]]:
+        """注册表全部工具清单：{name, description, source, plugin}。
+
+        source = native（内置原生工具）/ plugin（插件与「文件即模块」
+        注册的工具，二者都经 PluginLoader 进入注册表）。
+        """
+        reg = self._registry()
+        if reg is None:
+            return []
+        tool_plugin: Dict[str, str] = {}
+        try:
+            plugins = getattr(reg, "_plugins", {}) or {}
+            for pname, p in plugins.items():
+                get_tools = getattr(p, "get_tools", None)
+                for t in (get_tools() if callable(get_tools) else ()) or ():
+                    name = getattr(t, "name", "") or ""
+                    if name:
+                        tool_plugin[name] = pname
+        except Exception:  # noqa: BLE001 — 清单必须永不抛出
+            pass
+        out: List[Dict[str, Any]] = []
+        for name in reg.list_tools():
+            desc = ""
+            try:
+                schema = reg.resolve_tool(name).schema() or {}
+                func = schema.get("function", schema) if isinstance(schema, dict) else {}
+                desc = str(func.get("description", "") or "").strip()
+            except Exception:  # noqa: BLE001
+                pass
+            out.append({
+                "name": str(name),
+                "description": desc[:200],
+                "source": "plugin" if name in tool_plugin else "native",
+                "plugin": tool_plugin.get(name, ""),
+            })
+        return out
+
+    def set_agent_tools(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """设置 front 智能体可用工具集（文件即模块工具的挂载 / 卸载入口）。
+
+        ``tools`` = 显式工具全集；与预设默认集一致时自动回落为非显式
+        （跟随预设演进）。经 _apply_config 热应用到运行中的 agent，
+        下一次 front 聊天即生效（模型 tool calling 直接可用）。
+        """
+        tools = data.get("tools") if isinstance(data, dict) else None
+        if not isinstance(tools, list):
+            return {"ok": False, "error": "tools 必须为字符串列表"}
+        explicit = bool(data.get("explicit", True))
+        reg = self._registry()
+        valid = set(reg.list_tools()) if reg is not None else set()
+        cleaned = sorted({str(t) for t in tools if str(t) in valid})
+        with self._lock:
+            base_sorted = sorted(self._agent_base_tools)
+            if cleaned == base_sorted and not data.get("force_explicit"):
+                # 与预设默认一致：回落非显式，让工具集跟随预设演进
+                explicit = False
+                cleaned = []
+            self._config["agent_tools"] = cleaned
+            self._config["agent_tools_explicit"] = bool(explicit)
+            cfg = dict(self._config)
+        self._save_config_to_disk(cfg)
+        self._apply_config(cfg)
+        return {
+            "ok": True,
+            "agent_tools": self.agent_effective_tools(),
+            "explicit": bool(explicit),
+            "dropped": sorted(
+                {str(t) for t in tools if str(t) not in valid}),
+        }
 
     def save_config(self, incoming: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
@@ -1773,6 +1929,9 @@ class WebUI:
             groups["remote_models"] = remote
             groups["frontends"] = fe_mods
             snap["groups"] = groups
+            # 智能体工具挂载：预设默认集（回退基准）+ 当前生效集
+            snap["agent_base_tools"] = list(self._agent_base_tools)
+            snap["agent_tools"] = self.agent_effective_tools()
             return snap
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}

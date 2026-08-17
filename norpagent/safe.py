@@ -114,6 +114,7 @@ class SafetyKit:
     def __init__(self, context: SecurityContext) -> None:
         self.context = context
         self._installed: List[Any] = []
+        self._hook_subscriptions: List[Tuple[Any, str]] = []
         self._approval_cache: Optional[ApprovalPolicy] = None
         self._network_cache: Optional[NetworkPolicy] = None
 
@@ -140,6 +141,7 @@ class SafetyKit:
                 return None
 
             hooks.before_input.subscribe(guard_input)
+            self._hook_subscriptions.append((guard_input, "before_input"))
 
         # L5 提示词加固：改写系统提示词。
         if self.context.harden_enabled:
@@ -156,9 +158,32 @@ class SafetyKit:
                 return harden_messages(event)
 
             hooks.before_build_messages.subscribe(harden_wrapper)
+            self._hook_subscriptions.append(
+                (harden_wrapper, "before_build_messages")
+            )
 
         self._installed.append(registry)
         return self
+
+    def uninstall(self, registry: Any) -> None:
+        """卸载本套件：退订钩子订阅者、清除安全上下文。
+
+        运行中热挂载 security 槽位时先 uninstall 旧套件再安装新套件，
+        避免同一总线上重复叠加防护钩子。
+        """
+        for fn, event_name in self._hook_subscriptions:
+            try:
+                registry.bus.unsubscribe(fn, event_name)
+            except Exception:  # noqa: BLE001 — 总线状态异常不阻塞卸载
+                pass
+        self._hook_subscriptions.clear()
+        try:
+            if getattr(registry, "security", None) is self.context:
+                registry.security = None
+        except Exception:  # noqa: BLE001
+            pass
+        if registry in self._installed:
+            self._installed.remove(registry)
 
     # ── 独立安全检查 API（代理 norpagent.security）─────────
 

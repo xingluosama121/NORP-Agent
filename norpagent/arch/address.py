@@ -11,6 +11,13 @@
     callable       -> 直接作为实现（工厂函数 / 类）
     其它对象        -> 直接作为实现（实例 / 值）
 
+字符串地址支持附加配置子句（槽位挂载参数）：分号后的
+``键=值`` 对不属于地址本身，由架构层解析后注入工厂的
+``config`` 参数（见 ``norpagent.arch.layer.ArchLayer``），
+例如 ``"pkg.mod:create;timeout=5"``、``"pkg.mod:attr;html=/path/to/page.html"``。
+本模块在解析地址前会先剥离分号子句，因此子配置不会干扰
+模块路径与属性的解析。
+
 「地址函数」的语义：不填（None）就是默认逻辑运行；填了地址，
 架构层就按照地址把那个文件（或文件里的对象）直接接上槽位，
 核心代码不需要任何修改。
@@ -55,6 +62,15 @@ def _resolve_string(address: str, slot: str) -> Any:
     addr = address.strip()
     if not addr:
         raise AddressError(f"槽位 '{slot}' 的地址为空字符串")
+    # 剥离 ";key=value" 附加配置子句：分号后的键值对是工厂参数，
+    # 不属于模块地址，由 ArchLayer 解析并注入工厂的 config
+    # （见 norpagent.arch.layer.ArchLayer._parse_subconfig）。
+    addr = addr.split(";", 1)[0].strip()
+    if not addr:
+        raise AddressError(
+            f"槽位 '{slot}' 的地址 '{address}' 缺少模块路径"
+            "（分号前应为 'pkg.mod[:attr]'，分号后才是配置子句）"
+        )
     module_name, sep, attr = addr.partition(":")
     try:
         module = importlib.import_module(module_name)

@@ -810,6 +810,7 @@ const I18N = {
     'sel.upgrade':'拖入模块文件到该方块可升级 / 替换为文件模块',
     'dock.flow':'流程节点','dock.core':'核心模块','dock.tpl':'流程模板','dock.custom':'自定义模块',
     'dock.models':'模型','dock.tools':'工具','dock.sessions':'会话','dock.sandboxes':'沙箱',
+    'dock.agentOn':'已挂载到智能体','dock.agentOff':'未挂载到智能体',
     'dock.schedulers':'调度器','dock.plugins':'插件','dock.presets':'预设','dock.hooks':'插件钩子',
     'dock.tip':'拖卡片入画布注入 · 拖模块到容器 = 装入（TB 下方排列）· 拖入文件 = 文件即模块',
     'dock.customEmpty':'拖入模块文件后<br>在此生成自定义模块',
@@ -902,6 +903,8 @@ const I18N = {
     'log.flowStopped':'流程已停止（{n} 次中断）',
     'log.instance':'节点 <b>{label}</b> 实例已切换为 <b>{name}</b>',
     'log.regBackend':'模块 <b>{name}</b> 已在后端真实注册 · 工具 {tools} · 钩子 {hooks}',
+    'log.agentAttach':'工具 <b>{name}</b> 已挂载到 front 智能体（模型自动调用）',
+    'log.agentDetach':'工具 <b>{name}</b> 已从 front 智能体卸载',
     'log.hookNode':'钩子节点 <b>{hook}</b>（插件 {plugin}）已注入 · 一个钩子一个节点',
     'log.langSwitch':'界面语言已切换为 {lang}',
     'reg.badExt':'不支持的扩展名 .{ext}（支持 {list}）',
@@ -916,6 +919,9 @@ const I18N = {
     'toast.dirOut':'连线从输出端口出发（钩子方向 out）',
     'toast.injected':'已热注入模块：{label}',
     'toast.dropOutside':'拖放目标不在画布内',
+    'toast.agentAttached':'已挂载 {name}：front 智能体可自动调用',
+    'toast.agentDetached':'已卸载 {name}（front 智能体不再调用）',
+    'toast.agentToolFail':'更新智能体工具失败（见日志）',
     'toast.tplInjected':'流程模板已注入：{name}',
     'toast.regNode':'注册成功：{name} 已挂载到方块',
     'toast.regCanvas':'注册成功：{name} 已注入画布',
@@ -1027,6 +1033,7 @@ const I18N = {
     'sel.upgrade':'Drop a module file onto this node to upgrade / replace it',
     'dock.flow':'Flow nodes','dock.core':'Core modules','dock.tpl':'Flow templates','dock.custom':'Custom modules',
     'dock.models':'Models','dock.tools':'Tools','dock.sessions':'Sessions','dock.sandboxes':'Sandboxes',
+    'dock.agentOn':'Attached to agent','dock.agentOff':'Not attached to agent',
     'dock.schedulers':'Schedulers','dock.plugins':'Plugins','dock.presets':'Presets','dock.hooks':'Plugin hooks',
     'dock.tip':'Drag a card onto canvas to inject · drop a file = file-as-module<br>Drag a module onto a container to pack it in (stacked under the TB)',
     'dock.customEmpty':'Drop a module file<br>to register it here',
@@ -1119,6 +1126,8 @@ const I18N = {
     'log.flowStopped':'flow stopped ({n} interrupt(s))',
     'log.instance':'node <b>{label}</b> instance switched to <b>{name}</b>',
     'log.regBackend':'module <b>{name}</b> registered in backend · tools {tools} · hooks {hooks}',
+    'log.agentAttach':'tool <b>{name}</b> attached to the front agent (auto tool calling)',
+    'log.agentDetach':'tool <b>{name}</b> detached from the front agent',
     'log.hookNode':'hook node <b>{hook}</b> (plugin {plugin}) injected · one hook, one node',
     'log.langSwitch':'interface language switched to {lang}',
     'reg.badExt':'unsupported extension .{ext} (supported: {list})',
@@ -1133,6 +1142,9 @@ const I18N = {
     'toast.applyOff':'Deactivated: front chat returns to the normal agent',
     'toast.injected':'Module hot-injected: {label}',
     'toast.dropOutside':'Drop target is outside the canvas',
+    'toast.agentAttached':'Attached {name} — the front agent can auto-call it',
+    'toast.agentDetached':'Detached {name} from the front agent',
+    'toast.agentToolFail':'Failed to update agent tools (see log)',
     'toast.tplInjected':'Template injected: {name}',
     'toast.regNode':'Registered: {name} attached to node',
     'toast.regCanvas':'Registered: {name} injected onto canvas',
@@ -2674,8 +2686,12 @@ function renderRegistryDock(coreBox){
       { sub:'REMOTE', attach:true }));
   });
   addGroupLabel(t('dock.tools'));
-  g.tools.forEach(tl=>coreBox.appendChild(dockInstanceCard('tool', tl.name, tl.name,
-    { sub:tl.plugin||'tool', ports:{ ins:tl.ins||['query'], outs:tl.outs||['result'] }, attach:true })));
+  g.tools.forEach(tl=>{
+    const card = dockInstanceCard('tool', tl.name, tl.name,
+      { sub:tl.plugin||'tool', ports:{ ins:tl.ins||['query'], outs:tl.outs||['result'] }, attach:true });
+    coreBox.appendChild(card);
+    renderAgentToggle(card, tl.name);
+  });
   addGroupLabel(t('dock.sessions'));
   g.sessions.forEach(s=>coreBox.appendChild(dockInstanceCard('session', s.name, s.name,
     { attach:true })));
@@ -2734,6 +2750,49 @@ function attachCardToBox(cardEl, tb){
   else if(kind === 'plugin'){ attachPluginToBox(tb, name); }
   else if(kind === 'hook'){ attachHookToBox(tb, cardEl.dataset.plugin, name); }
   else { attachInstanceToBox(tb, kind, name); }
+}
+
+/* ── 挂到 front 智能体：文件即模块工具 → 模型自动调用 ── */
+function agentAttached(name){
+  const list = (BE.snapshot && BE.snapshot.agent_tools) || [];
+  return list.indexOf(name) >= 0;
+}
+function renderAgentToggle(card, name){
+  const b = document.createElement('span');
+  b.className = 'agent-toggle';
+  const on = agentAttached(name);
+  b.textContent = on ? 'AGENT' : '+AGENT';
+  b.title = on ? t('dock.agentOn') : t('dock.agentOff');
+  b.style.cssText = 'font-size:9px;line-height:1;padding:2px 5px;border-radius:7px;cursor:pointer;'+
+    (on ? 'background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.45);'
+        : 'background:rgba(148,163,184,.08);color:#64748b;border:1px solid rgba(100,116,139,.35);')+
+    'user-select:none;flex:none;';
+  b.addEventListener('click', e=>{
+    e.stopPropagation();
+    e.preventDefault();
+    toggleAgentTool(name);
+  });
+  // 阻止 pointerdown 触发拖拽（点击开关不应拖卡片）
+  b.addEventListener('pointerdown', e=>{ e.stopPropagation(); });
+  card.appendChild(b);
+}
+async function toggleAgentTool(name){
+  const cur = (BE.snapshot && BE.snapshot.agent_tools) ? BE.snapshot.agent_tools.slice() : [];
+  const on = cur.indexOf(name) >= 0;
+  const list = on ? cur.filter(x=>x!==name) : cur.concat([name]);
+  try{
+    const d = await fetch('/api/agent/tools', {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ tools:list, explicit:true })
+    }).then(r=>r.json());
+    if(!d || !d.ok) throw new Error((d && d.error) || 'failed');
+    await refreshSnapshot();
+    toast(on ? t('toast.agentDetached',{name:name}) : t('toast.agentAttached',{name:name}));
+    log('<b>agent.tools</b> '+(on ? t('log.agentDetach',{name:name}) : t('log.agentAttach',{name:name})), 'info');
+  }catch(err){
+    toast(t('toast.agentToolFail'), true);
+    log('<b>agent.tools</b> '+t('toast.agentToolFail')+': '+String(err), 'error');
+  }
 }
 function dockHookCard(pluginName, hook){
   const meta = KIND_META.hook;
@@ -4355,6 +4414,8 @@ window.NORPFLOW = {
   runFlowBackend,
   buildGraph,
   refreshSnapshot,
+  toggleAgentTool,
+  agentAttached,
   ioClear
 };
 

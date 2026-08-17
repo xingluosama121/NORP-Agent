@@ -64,7 +64,18 @@ for info in loader.plugins:
 | `TOOLS` | list | OpenAI function schema 列表 |
 | `execute(tool_name, args, ctx)` | callable | 工具统一入口，返回 str（或 None） |
 | `APPROVAL_HINTS` | dict | 工具 → 审批提示（见下） |
-| 15 个钩子函数 | callable | 生命周期钩子（见下） |
+| `ISOLATION` | str | `"process"` = 进程级隔离（插件代码只在宿主子进程加载执行，见第 10 节） |
+| `__norpagent_type__` | str | 文件即模块类型声明：`"tool"` / `"plugin"` 等（见下） |
+| 生命周期钩子函数 | callable | 与旧应用 hook 名完全对齐（on_task_start / before_step / before_tool_call / after_tool_call 等，见下） |
+
+### 文件即模块（FLOW 拖入自动识别）
+
+模块文件头部可声明 `__norpagent_type__` 模块级变量（`.json/.yaml` 用
+`type` 字段），前端据此路由到对应节点；未声明回退 `other`：
+
+```python
+__norpagent_type__ = "tool"   # 声明为工具模块（拖入 /flow 即真实注册）
+```
 
 ## 3. 生命周期钩子（与现有应用 15 个 hook 对齐）
 
@@ -183,10 +194,31 @@ python -m norpagent plugin-sign my_plugin.py --key <私钥hex>   # 生成 my_plu
 `plugin_network_policy` 决定，默认 `deny`（插件禁止访问网络）。
 插件自身无法绕过：策略执行于宿主进程，独立于插件代码。
 
-## 9. 调试技巧
+## 9. 进程级插件隔离
+
+插件模块级声明 `ISOLATION = "process"`（或 manifest `isolation` 字段、
+或宿主配置 `plugin_isolation: "process"` 全局强制）：
+
+```python
+PLUGIN_NAME = "Isolated Hello"
+ISOLATION = "process"
+```
+
+隔离语义：
+
+- 插件模块对象**只存在于宿主子进程**（`python -m norpagent.plugins.host`，
+  JSON 行协议 RPC：load / call_tool / fire_hook / set_context）；
+- 工具执行经 RPC 回传，钩子经 fire_hook 转发（单次钩子限时 5s，
+  超时放弃——插件永不拖死主循环）；
+- 崩溃自愈：子进程死亡 → 自动重启 + 重载全部插件 → 重试一次；
+- 导入限制在子进程内继续生效（纵深防御）。
+
+## 10. 调试技巧
 
 - 加载结果：`loader.plugins[i].error` 给出拒绝原因（含审计行号）；
 - 审计明细：`loader.plugins[i].audit_issues`（severity / line / category）；
 - 热重载：修改插件后重建 Registry 并重新 `install_plugin_dirs` 即可；
+  运行中的引擎也可以 `np.remount(plugins=["./my_plugins"])` 整体替换
+  plugins 槽位（旧订阅自动退订，见开发手册 3.7 节运行中热挂载）；
 - 单测插件逻辑：`PluginLoader([dir], config={"plugin_security_audit": "off",
   "plugin_signature_verify": False})` 临时关闭防护（仅限本地调试）。

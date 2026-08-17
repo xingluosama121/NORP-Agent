@@ -1,5 +1,12 @@
 # NORP Agent 视觉 API 开发手册
 
+> **状态**：本文档描述的视觉 API（vision.py / vision_adapters.py /
+> vision_capture.py / vision_actions.py / vision_safety.py /
+> vision_coordinator.py / vision_ipc.py）与窗口捕获外挂
+> （capture_worker）**已在库化重构中从核心库剥离**——当前 pip 库
+> `norpagent` 不再包含这些模块。pyproject 的 `windows` extra 已预留
+> 位置，计划以可选插件形式回归。本文档保留作历史参考。
+>
 > 版本：v1.0（对应 vision.py / vision_adapters.py / vision_capture.py / vision_actions.py / vision_safety.py / vision_coordinator.py / vision_ipc.py 现状）
 > 适用对象：想让 Agent「看得懂图片/视频」的开发者、想接入任意多模态模型的开发者、想构建「视觉 + 键鼠操作」能力的重度开发者
 

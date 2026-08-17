@@ -1,8 +1,8 @@
-﻿# Copyright (c) 2026 xingluosama121, MIT Licensed
+# Copyright (c) 2026 xingluosama121, MIT Licensed
 """槽位装配器：把架构层槽位实现装配为注册表 + 预设覆盖。
 
 ArchLayer 连接完成后，本模块把每个槽位的实现「安装」进
-注册表与预设声明，产出三个对象：
+注册表与预设声明，产出：
 
     (registry, preset, extras)
 
@@ -13,13 +13,18 @@ ArchLayer 连接完成后，本模块把每个槽位的实现「安装」进
 
 默认逻辑全部走「预设声明」，即槽位不填 = 预设说了算；
 槽位填了 = 覆盖预设（地址直接接上）。
+
+本模块同时是「运行中热挂载」（norpagent.runtime.remount）的装配面：
+``apply_slot_overrides`` 可以对**已经运行中的注册表**重复执行，
+旧的架构级订阅（钩子 / 安全套件 / 插件）会先退订再重挂，
+因此任何槽位的运行时替换都不会叠加出重复订阅。
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from norpagent.builtin import install_defaults
 from norpagent.kernel.presets import Preset
@@ -48,6 +53,19 @@ def _has_model_credentials(params: Dict[str, Any]) -> bool:
     if params.get("api_key"):
         return True
     return any(os.environ.get(key) for key in _CREDENTIAL_ENV_KEYS)
+
+
+def _arch_meta(reg: Registry) -> Dict[str, Any]:
+    """取注册表的「架构装配元数据」容器（懒建）。
+
+    记录架构层挂上去的可退订对象（钩子订阅 / 安全套件 / 插件加载器），
+    热重挂载时先按这些记录退订旧实现，防止重复叠加。
+    """
+    meta = getattr(reg, "_arch_meta", None)
+    if meta is None:
+        meta = {}
+        reg._arch_meta = meta
+    return meta
 
 
 def _apply_model_options(reg: Registry, overrides: Dict[str, Any],
@@ -101,11 +119,24 @@ def _register_instance_or_factory(reg: Registry, kind: str, name: str,
 
 def build_registry(layer: Any,
                    params: Optional[Dict[str, Any]] = None) -> Tuple[Registry, Preset, Dict[str, Any]]:
-    """装配注册表与最终预设。"""
+    """装配一个全新注册表与最终预设（np() 启动路径）。"""
     params = params or {}
     reg = Registry()
     install_defaults(reg)
     register_all_presets(reg)
+    final, extras = apply_slot_overrides(reg, layer, params)
+    return reg, final, extras
+
+
+def apply_slot_overrides(reg: Registry, layer: Any,
+                         params: Optional[Dict[str, Any]] = None) -> Tuple[Preset, Dict[str, Any]]:
+    """把架构层槽位值应用到注册表，产出最终预设与 extras。
+
+    可重复执行（热挂载）：重复执行前会先退订上次由本函数挂上去的
+    架构级订阅（钩子扩展 / 安全套件 / 插件），保证订阅不叠加。
+    """
+    params = params or {}
+    meta = _arch_meta(reg)
 
     # ── preset 槽位：决定基线预设 ──
     preset_value = layer.get("preset")
@@ -173,12 +204,15 @@ def build_registry(layer: Any,
             overrides["tools"] = [tname]
 
     # ── 会话 / 沙箱 / 调度器 ──
+    # 注册表列举方法按槽位复数命名；sandbox 复数不规则（sandboxes）
+    _slot_plural = {"sandbox": "sandboxes"}
     for slot in ("session", "sandbox", "scheduler"):
         value = layer.get(slot)
         if value is None:
             continue
+        lister = _slot_plural.get(slot, f"{slot}s")
         if isinstance(value, str):
-            if value in getattr(reg, f"list_{slot}s")():
+            if value in getattr(reg, f"list_{lister}")():
                 overrides[slot] = value  # 已注册名字引用
             else:
                 # 字符串不是已注册名 → 按模块地址解析
@@ -211,39 +245,58 @@ def build_registry(layer: Any,
         components[kind] = f"_arch_{slot}"
         extras[slot] = value
 
-    # ── 钩子扩展 ──
+    # ── 钩子扩展（先退订上次的架构级订阅，防重复叠加） ──
     hooks = layer.get("hooks")
+    for fn, event_name in meta.pop("hook_subs", ()):
+        try:
+            reg.bus.unsubscribe(fn, event_name)
+        except Exception:  # noqa: BLE001
+            pass
     if hooks is not None:
         if callable(hooks) and not isinstance(hooks, dict):
             hooks = hooks(reg)
         if isinstance(hooks, dict):
+            subs: List[Tuple[Any, str]] = []
             for hook_name, fn in hooks.items():
                 reg.bus.subscribe(fn, hook_name)
+                subs.append((fn, hook_name))
+            meta["hook_subs"] = subs
 
-    # ── 安全 ──
+    # ── 安全（先卸载上次的架构级套件，防钩子叠加） ──
     security = layer.get("security")
+    prev_kit = meta.pop("safety_kit", None)
+    if prev_kit is not None:
+        try:
+            prev_kit.uninstall(reg)
+        except Exception:  # noqa: BLE001
+            pass
     if security is not None:
         if isinstance(security, str):
             from norpagent import safe
 
-            safe(reg, level=security)
+            kit = safe(reg, level=security)
+            meta["safety_kit"] = kit
         elif callable(security):
             security(reg)
         else:  # SecurityContext / 其它对象：直接安装
             reg.security = security
 
-    # ── 外部插件 ──
+    # ── 外部插件（先卸载上次的架构级插件，再重装） ──
     plugins = layer.get("plugins")
+    prev_loader = meta.pop("plugin_loader", None)
+    if prev_loader is not None:
+        _unload_arch_plugins(reg, prev_loader)
     if plugins is not None:
         if callable(plugins) and not isinstance(plugins, (list, tuple)):
             plugins = plugins(reg)
         if isinstance(plugins, (list, tuple)):
             from norpagent.plugins import install_plugin_dirs
 
-            install_plugin_dirs(reg, list(plugins), config={
+            loader = install_plugin_dirs(reg, list(plugins), config={
                 "plugin_security_audit": "warn",
                 "plugin_signature_verify": True,
             })
+            meta["plugin_loader"] = loader
 
     # ── 基础服务槽位 ──
     logger = layer.get("logger")
@@ -267,7 +320,32 @@ def build_registry(layer: Any,
         components=components,
     )
     reg.register_preset(final)
-    return reg, final, extras
+    return final, extras
+
+
+def _unload_arch_plugins(reg: Registry, loader: Any) -> None:
+    """卸载上次由架构层安装的插件（热重挂载 plugins 槽位的前置步骤）。
+
+    - 退订每个插件的钩子订阅（Registry.unregister_plugin）；
+    - 弹出插件的 sys.modules 缓存（loader.unload）；
+    - 释放进程隔离宿主子进程（loader.shutdown）。
+
+    工具条目保留在注册表（名字覆盖语义：重装同名插件自然覆盖，
+    不再加载的旧工具名留在表中但不在预设工具集内，不可达）。
+    """
+    try:
+        for info in list(getattr(loader, "plugins", ()) or ()):
+            reg.unregister_plugin(getattr(info, "name", ""))
+            try:
+                loader.unload(reg, getattr(info, "name", ""))
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        loader.shutdown()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def default_loop_factory(layer: Any) -> Any:
@@ -311,4 +389,4 @@ def mount_defaults(layer: Any, prompt: Optional[str] = None) -> None:
     layer.set_default("agent_runtime", lambda ctx: AgentRuntime)
 
 
-__all__ = ["build_registry", "mount_defaults"]
+__all__ = ["build_registry", "apply_slot_overrides", "mount_defaults"]

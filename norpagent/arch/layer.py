@@ -21,6 +21,9 @@ from typing import Any, Callable, Dict, Optional
 from norpagent.arch.address import AddressError, resolve_address
 from norpagent.arch.slots import SLOT_SPECS, SlotSpec
 
+# remount() 的「未指定新值」哨兵：与显式传 None（清空槽位）区分。
+_RAISE = object()
+
 
 def call_factory(factory: Any, ctx: Dict[str, Any]) -> Any:
     """按签名裁剪调用工厂（地址函数的标准调用约定）。
@@ -76,6 +79,8 @@ class ArchLayer:
         self.config.update({k: v for k, v in slot_values.items() if v is not None})
         self._impls: Dict[str, Any] = {}
         self._defaults: Dict[str, Callable[[Dict[str, Any]], Any]] = {}
+        # 每个槽位解析出的附加子配置（";key=value" 子句 / config 注入）
+        self._subconfigs: Dict[str, Dict[str, Any]] = {}
         self._connected = False
 
     # ── 默认实现登记 ──────────────────────────────────────
@@ -101,6 +106,66 @@ class ArchLayer:
         self._connected = True
         return self
 
+    def remount(self, slot: str, value: Any = _RAISE) -> Any:
+        """运行中热挂载：替换槽位实现（任何槽位均可，无需重启）。
+
+        - ``value`` 缺省：按当前配置值重新解析实现。字符串地址会先
+          失效对应模块缓存，因此「修改模块文件后调用 remount」
+          即可在运行中换上改动后的代码（热重载）；
+        - ``value`` 为 None：清空该槽位配置（回落默认逻辑）；
+        - 其它值：替换槽位配置并按新值解析。
+
+        已 connect 时立即重建该槽位实现并返回；未 connect 时仅更新
+        配置（连接时统一解析，返回 None）。
+        """
+        if slot not in SLOT_SPECS:
+            raise KeyError(f"未知槽位 '{slot}'。可用槽位: {list(SLOT_SPECS)}")
+        if value is _RAISE:
+            value = self.config.get(slot)
+        if isinstance(value, str):
+            self._invalidate_address_module(value)
+        if value is None:
+            self.config.pop(slot, None)
+        else:
+            self.config[slot] = value
+        if not self._connected:
+            return None
+        impl = self._connect_slot(slot)
+        self._impls[slot] = impl
+        return impl
+
+    @staticmethod
+    def _invalidate_address_module(address: str) -> None:
+        """失效字符串地址对应的模块缓存（热挂载前置步骤）。
+
+        两步失效：
+
+        1. 删除模块的字节码缓存（``module.__cached__`` 对应的 .pyc）——
+           不删则 importlib 按 (mtime秒, size) 校验时，同一秒内改写的
+           同尺寸文件会被误判为「缓存仍新鲜」，重新导入拿到旧代码；
+        2. 弹出 ``sys.modules`` 条目，下次解析从磁盘重新导入。
+
+        只处理地址里的模块名（分号子句与 :attr 不属于模块路径）。
+        """
+        import os
+        import sys
+
+        addr = address.split(";", 1)[0].strip()
+        if not addr:
+            return
+        module_name = addr.partition(":")[0].strip()
+        if not module_name:
+            return
+        module = sys.modules.get(module_name)
+        if module is not None:
+            cached = getattr(module, "__cached__", None)
+            if cached:
+                try:
+                    os.remove(cached)
+                except OSError:
+                    pass
+        sys.modules.pop(module_name, None)
+
     def _connect_slot(self, slot: str) -> Any:
         spec: SlotSpec = SLOT_SPECS[slot]
         value = self.config.get(slot)
@@ -110,26 +175,37 @@ class ArchLayer:
                 # 语义：该槽位未指定 → 实现为 None，
                 # 由装配器按「预设声明」的默认逻辑处理
                 # （如 model / tools / session 等组件槽位）。
+                self._subconfigs[slot] = {}
                 return None
+            self._subconfigs[slot] = {}
             return default_factory(self._context(slot, {}))
         # 填了地址 / 值：按槽位声明的字符串语义处理
         semantics = spec.string_semantics
         if isinstance(value, str):
             if semantics in ("name", "literal"):
                 # 注册表组件名 / 字面值：原样透传，由装配器语义化
+                self._subconfigs[slot] = {}
                 return value
             if semantics == "name_or_address":
                 # 先按名、后按地址的判定放在装配器（需要注册表上下文）
+                self._subconfigs[slot] = {}
                 return value
         elif semantics in ("name", "literal", "name_or_address"):
             # 非字符串值（实例 / 回调 / 类）：同样原样透传，
             # 由装配器决定如何注册 / 调用（不能当作地址工厂）。
+            self._subconfigs[slot] = {}
             return value
         # 默认语义 "address"：字符串解析为模块地址
         impl = resolve_address(value, slot=slot)
         sub_config = {}
         if isinstance(value, str) and ";" in value:
             sub_config = self._parse_subconfig(value)
+        self._subconfigs[slot] = sub_config
+        # defer_factory 槽位（agent_runtime）：只解析地址，不实例化。
+        # 工厂推迟到引擎装配期（NorpEngine._build_agent）调用，
+        # 此时 registry / preset 等完整上下文才就绪。
+        if callable(impl) and spec.defer_factory:
+            return impl
         if callable(impl):
             return call_factory(impl, self._context(slot, sub_config or {}))
         return impl
@@ -175,6 +251,14 @@ class ArchLayer:
         if not self._connected:
             return default
         return self._impls.get(slot, default)
+
+    def subconfig(self, slot: str) -> Dict[str, Any]:
+        """取槽位解析出的附加子配置（";key=value" 子句）。
+
+        供引擎在装配期消费（如 agent_runtime 工厂的 config 注入）。
+        未解析时返回空字典。
+        """
+        return dict(self._subconfigs.get(slot) or {})
 
     def describe(self) -> str:
         """装配清单：每个槽位的来源（默认 / 地址）与实现。"""

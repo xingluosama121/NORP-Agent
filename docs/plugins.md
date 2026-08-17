@@ -35,6 +35,10 @@ ps.shutdown()                # 释放隔离子进程
 `install_plugin_dirs(reg, dirs)` 未传 config 时自动继承
 `registry.security`（norpagent.safe() 安装的安全策略）。
 
+> 运行中热挂载：`np.remount(plugins=["./my_plugins"])` 可整体替换
+> plugins 槽位——旧插件钩子先退订、sys.modules 缓存清理、隔离宿主释放，
+> 再按新目录走完整安全管线重装（见 DEVELOPER_MANUAL 3.7 节）。
+
 ## 进程级插件隔离（P4）
 
 插件模块级声明 `ISOLATION = "process"`（或 manifest `isolation` 字段、
