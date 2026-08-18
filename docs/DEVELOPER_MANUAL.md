@@ -238,6 +238,108 @@ Agent 循环）时，为槽位填入新地址即可，无需修改框架核心�
 
 ---
 
+### 2.6 模块化约定：分层依赖与扩展点
+
+#### 2.6.1 依赖方向：单向下行
+
+全部模块的自底向上依赖关系（上层可以 import 下层，下层不得
+反向依赖上层）：
+
+| 层 | 模块 | 允许依赖 |
+|---|---|---|
+| L0 契约 | `protocols/*` | 仅其它 protocol（零框架依赖） |
+| L0 核心 | `nasyncio.py` | 仅标准库（自研异步核心，自包含） |
+| L0 最小内核 | `kernel/events.py`、`kernel/registry.py` | 标准库 + protocols（registry 引用 Plugin / Tool 协议） |
+| L1 钩子 | `hooks/*` | 仅 `kernel.events`（总线结构化视图） |
+| L1 安全 | `security/*` | 零框架依赖（纯决策模块 + 可选 cryptography） |
+| L2 插件 | `plugins/*` | `protocols` + `security/*` + `hooks.core`（管线层） |
+| L2 内核循环 | `kernel/agent.py` | `hooks.core` + `kernel/*` + `loops.cancel` + `protocols/*` |
+| L2 内置 | `builtin/*` | `protocols/*`（+ 沙箱用 `loops.cancel`） |
+| L2 模式 | `modes/*` | 仅 `kernel.presets` |
+| L3 架构 | `arch/*` | 仅自身（address / slots / layer） |
+| L3 循环 | `loops/*` | `arch` + `nasyncio` |
+| L3 前端 | `frontends/*` | 仅 `frontends.base` |
+| L4 装配 | `runtime/*` | arch + builtin + kernel + modes（唯一「知道一切」的装配点） |
+| L4 入口 | `__init__.py` / `cli.py` / `__main__.py` | 全部 |
+
+关键规则：
+
+- **内核可裁剪**：`kernel` 模块级不 import `security` /
+  `plugins` / `builtin`——安全以 `registry.security` 注入，
+  防护扫描在任务级参数显式要求时才惰性 import guard；插件以
+  `register_plugin` 注入。嵌入式场景（14.2）正是靠这条规则把
+  sqlite3 / http.server 等全部挡在内核之外；
+- **内置组件也是普通实现者**：`builtin/*` 只依赖 protocols，
+  与第三方组件地位完全平等，都经注册表按名解析；
+- **协议与实现分离**：组件之间只通过 `protocols/*` 的接口契约
+  对话（模型 / 工具 / 会话 / 沙箱 / 调度器 / UI / 插件），
+  任何实现满足协议即可接入；
+- `runtime.mount` 是唯一的默认装配点：预设（modes）+ 内置
+  组件（builtin）在这里按槽位表（arch/slots）组装成注册表；
+- `safe.py` 与 `security/*` 一样处于低层：安全系统可以脱离
+  框架单独测试 / 单独使用，内核只通过注入点感知它（第 10 章）。
+
+#### 2.6.2 四类扩展点
+
+按侵入性从低到高，**全部无需修改框架核心代码**：
+
+| 扩展点 | 方式 | 章节 |
+|---|---|---|
+| 事件订阅 | `reg.hooks.*.subscribe` / `reg.bus.subscribe` | 第 9 章 |
+| 组件替换 | 槽位地址（模型 / 工具 / 会话 / 沙箱 / 前端 / 循环…） | 第 3 章 |
+| 通用组件 | `register_component(kind, name, factory)` + 预设 components | 2.6.3 |
+| 全新槽位 | `register_slot(SlotSpec(...))` | 3.8 |
+| 外部插件 | 独立文件 / manifest 包，安全管线加载 | 第 11 章 |
+| 安全策略 | `safe()` 运行态策略 + 独立 API | 第 10 章 |
+| 循环 / 执行结构 | 方法覆写或 agent_runtime 槽位 | 9.6 |
+
+「框架核心代码零修改」是设计红线：所有扩展走槽位 / 钩子 /
+注册表，这也是 2.3 节「最小内核只有四样」的推论——最小内核
+之外的一切都有既定替换通道。
+
+#### 2.6.3 通用组件命名空间
+
+除 model / tool / session / sandbox / scheduler / ui 六个专用
+命名空间外，Registry 提供开放的通用组件命名空间：
+
+```python
+reg.register_component("context_store", "my_store", lambda: MyStore())
+reg.register_component("my_kind", "my_impl", factory)   # 种类本身开放
+
+# 预设里声明引用
+Preset(name="mine", ..., components={"context_store": "my_store",
+                                     "my_kind": "my_impl"})
+
+reg.build_component("my_kind", "my_impl")               # 构建（工厂调用）
+reg.build_component("context_store", "my_store",
+                    workspace_root=path)                # 按签名注入工作区根
+reg.list_components()                                   # 列出全部种类
+```
+
+上下文存储 / 项目管理 / 任务存储等一切「附加能力」都走这里，
+框架无需改内核即可扩展新的组件种类；工厂声明了
+`workspace_root` 参数（或 **kwargs）时自动注入工作区根。
+
+#### 2.6.4 新增组件模块的标准流程（五步）
+
+以「新增一个会话实现」为例：
+
+1. **写协议**（如无）：在 `protocols/` 定义接口契约；
+2. **写实现**：新建模块，只依赖 protocols（参照
+   builtin/sessions/ 的写法）；
+3. **注册**：`reg.register_session("redis", factory)` 或由
+   runtime.mount / 自己的装配代码登记；
+4. **声明使用**：预设里 `session="redis"`，或启动时
+   `np(session="redis")` / 地址字符串
+   `np(session="myapp.redis:create")`；
+5. **接钩子**（可选）：在实现内经 registry 发布 / 订阅事件。
+
+等价的手工装配路径：`Registry() + register_* +
+AgentRuntime(...)`（17.1 节），与 np() 装配完全同构——np()
+只是把这五步自动化。
+
+---
+
 ## 第 3 章　架构层与地址函数
 
 替换任意组件的做法：为对应槽位填入新地址，不修改框架核心代码。
@@ -1391,85 +1493,277 @@ np(error_handler=lambda exc, eng: print(exc))  # 错误最后防线
 
 ## 第 9 章　9 层 29 钩子
 
-### 9.1 钩子分层
+> 设计原则：**每一个执行结构都必须暴露为 API，并且可以被钩子干预。**
+> 每个钩子都是独立的模块级 API；支持自定义钩子、自定义层；零依赖，
+> 标准库自带。本章与 `docs/hooks.md`（钩子体系独立文档）配套阅读。
 
-Agent 循环的执行结构均以钩子 API 暴露，可用钩子干预。Agent 循环
-切为 9 层，每层引出钩子：
+### 9.1 钩子分层与 29 钩子全表
+
+Agent 循环切为 9 层，每层引出钩子：
 
 ```
 L1 运行时生命周期 ─ L2 任务 ─ L3 输入 ─ L4 会话与历史 ─ L5 消息组装
    ─ L6 步骤 ─ L7 模型调用 ─ L8 工具调用 ─ L9 结果定型
 ```
 
-每个钩子是独立 API，有三种用法：
+29 个钩子全部是 `norpagent.hooks` 下可导入的一等对象
+（`from norpagent.hooks import before_model_call, ...`），全表如下：
+
+| 层 | 钩子 | 可变 | 负载键（payload_keys） |
+|---|---|---|---|
+| L1 运行时 | `on_agent_init` | | preset |
+| L1 运行时 | `on_agent_shutdown` | | preset |
+| L2 任务 | `on_task_start` | | task_id, session_id, preset, user_input |
+| L2 任务 | `on_task_done` | | task_id, session_id, content, steps, context |
+| L2 任务 | `on_task_error` | | task_id, error |
+| L2 任务 | `on_task_stopped` | | task_id, reason |
+| L2 任务 | `on_task_timeout` | | task_id, timeout, kind |
+| L3 输入 | `before_input` | ✓ | task_id, user_input, session_id, params |
+| L3 输入 | `after_input` | | task_id, user_input, session_id |
+| L3 输入 | `on_user_input_required` | | question, default |
+| L4 会话 | `before_session_create` | ✓ | session_id, title, params, task_id |
+| L4 会话 | `after_session_create` | | session_id, title, task_id |
+| L4 会话 | `before_message_append` | ✓ | session_id, message, task_id |
+| L4 会话 | `after_message_append` | | session_id, message, task_id |
+| L5 组装 | `before_build_messages` | ✓ | system_prompt, session_id, step, task_id, tool_names |
+| L5 组装 | `after_build_messages` | ✓ | messages, system_prompt, step, task_id |
+| L6 步骤 | `before_step` | ✓ | task_id, step, messages, context, params |
+| L6 步骤 | `after_step` | | task_id, step, content, tool_calls |
+| L7 模型 | `before_model_call` | ✓ | task_id, step, messages, tool_schemas, params |
+| L7 模型 | `after_model_call` | ✓ | task_id, step, output |
+| L7 模型 | `on_reasoning` | | task_id, content, stream |
+| L7 模型 | `on_content` | | task_id, content, stream, final |
+| L7 模型 | `on_event` | | event_type, data, task_id |
+| L7 模型 | `on_usage_update` | | task_id, input, output, total |
+| L8 工具 | `before_tool_call` | ✓ | task_id, tool_name, args, context |
+| L8 工具 | `after_tool_call` | ✓ | task_id, tool_name, args, result, success, context |
+| L8 工具 | `on_tool_error` | | task_id, tool_name, error, args |
+| L9 定型 | `before_result` | ✓ | task_id, result |
+| L9 定型 | `after_result` | ✓ | task_id, result |
+
+带 ✓ 为**可变钩子**（mutating=True）：订阅者可通过返回值改写
+数据流，或抛 `HookVeto` 一票否决；其余为观测钩子（emit），
+返回值被忽略。每个钩子的完整负载键以 `Hook.payload_keys` 为准
+（与 `norpagent.hooks.standard` 中各钩子注释一致）。
+
+### 9.2 三种用法与订阅目标解析
 
 ```python
 from norpagent.hooks import before_model_call
 
-# 1. 模块级：订阅
-before_model_call.subscribe(my_fn)
-# 2. 运行时视图：agent.hooks.before_model_call
+# 1. 模块级独立 API：不传 system 时落在「进程默认钩子系统」
+before_model_call.subscribe(log_request)                # 默认系统（私有总线）
+before_model_call.subscribe(log_request, system=reg)    # 指定 Registry
+
+# 2. 运行时视图：与 registry.hooks 同一总线（多实例推荐）
+agent.hooks.before_model_call.subscribe(log_request)
+
 # 3. 槽位批量订阅：np(hooks={"before_model_call": my_fn})
 ```
 
-钩子分两类：**可变钩子**（intercept 可改写数据流）与**观测钩子**（emit）。
-`HookVeto` 异常使当前执行结构立即终止（任务按 stopped 收尾），
-事件总线对其特判透传。
+- 模块级 `Hook` 对象的 `subscribe / unsubscribe / emit / intercept`
+  都需要一个 `system` 定位总线，可传 `HookSystem / EventBus /
+  Registry / AgentRuntime`（`_resolve_bus` 统一解析）；
+  **缺省时落在进程级默认系统**（`hooks.get_default_system()`，
+  自带独立私有总线）——它与 `np()` 引擎的总线不是同一条。
+  给独立 Registry 使用时**务必显式传 system**（每个 Registry
+  自带私有总线，保证多实例隔离），否则订阅挂到默认系统上，
+  收不到引擎事件；
+- `agent.hooks.before_model_call` 返回 `BoundHook`（绑定到该
+  引擎总线的钩子），四个方法无需再传 system；
+- `np(hooks={...})` 槽位（literal 语义）：dict 的键是事件名、
+  值是订阅者，装配期统一挂到引擎总线上；热挂载
+  `np.remount(hooks=...)` 时先退订上次的架构级订阅再重挂，
+  **不叠加**。槽位值也可以是 `callable(reg)` 工厂：先调用、
+  返回 dict 后再订阅。
 
-### 9.2 自定义钩子与自定义层
+### 9.3 可变钩子的返回语义与 HookVeto
+
+可变钩子经 `EventBus.intercept` 分发：**按订阅顺序依次调用，
+返回第一个非 None 的返回值；全部返回 None 视为不干预。**
+返回语义全表：
+
+| 钩子 | 返回值 | 效果 |
+|---|---|---|
+| `before_input` | `str` | 替换用户输入 |
+| | `HookVeto(reason)` | 任务以 stopped 收尾，reason 进入错误信息 |
+| `before_session_create` | `str` / `{"title": str}` | 改写会话标题 |
+| | `HookVeto` | 放弃创建（任务以 stopped 收尾） |
+| `before_message_append` | `ChatMessage` | 替换消息 |
+| | `False` / `HookVeto` | 丢弃该条消息（不落库） |
+| `before_build_messages` | `str` / `{"system_prompt": str}` | 替换系统提示词 |
+| `after_build_messages` | `List[ChatMessage]` | 替换整组消息 |
+| `before_step` | `List[ChatMessage]` | 替换本轮消息 |
+| | `HookVeto` | 跳过本轮模型调用（进入下一轮） |
+| `before_model_call` | `{"messages": [...], "params": {...}}` | 按需替换请求 |
+| | `HookVeto` | 拒绝本轮调用（任务以 stopped 收尾） |
+| `after_model_call` | `ModelOutput` | 替换本次输出 |
+| `before_tool_call` | `dict` | 替换工具参数 |
+| | `False` / `HookVeto` | 阻止调用（回填 blocked_by_hook 结果） |
+| `after_tool_call` | `str` / `ToolResult` | 替换工具结果 |
+| `before_result` / `after_result` | `RunResult` | 替换最终结果 |
+| 两者 | `HookVeto` | 保持原结果（否决被忽略） |
+
+`HookVeto` 行为细节：
+
+- 类型定义在 `norpagent.kernel.events`（经 `norpagent.hooks`
+  再导出），是 `Exception` 子类，构造参数即否决原因；
+- `EventBus.intercept` 对 HookVeto **不捕获**——否决语义必须
+  送达内核，保证一票否决一定生效；普通订阅者异常被捕获记录
+  （stderr，或 `bus.set_error_logger()` 指定记录器）后继续
+  分发，单个订阅者永远拖不垮主循环；
+- 各执行点的否决收尾语义不同（见上表）：before_input /
+  before_model_call / before_session_create → 任务 stopped；
+  before_step → 跳过本轮；before_tool_call → 回填
+  blocked_by_hook；before_message_append → 丢弃该条；
+  before_result / after_result → 忽略否决保持原结果；
+- 订阅者分发顺序：全事件订阅者（`bus.subscribe(fn)` 不带事件名）
+  先于具名订阅者；同组内按订阅先后；emit 逐个调用（异常隔离），
+  intercept 逐个调用直到出现非 None 返回值。
+
+### 9.4 自定义钩子与自定义层
+
+三种扩展方式，与标准 29 钩子完全同权：
 
 ```python
-from norpagent.hooks import HookLayer, define_hook
+from norpagent.hooks import HookLayer
 
-my_layer = HookLayer("my_layer", 0)          # 自定义层
-my_hook = define_hook("my_hook", layer=my_layer, mutating=True)
+# 方式一：自定义层 + 层内声明钩子（插件加载管线是标准库用例，11.4）
+network_layer = HookLayer("L10_network", order=100, description="网络访问层")
+before_net = network_layer.hook("before_network_call", mutating=True,
+                                description="网络请求发出前（可改写 URL 或否决）")
+agent.hooks.install_layer(network_layer)          # 安装后立即可用
+agent.hooks.before_network_call.subscribe(monitor)
+
+# 方式二：直接在钩子系统上定义钩子（不建层，归属 dynamic 层）
+agent.hooks.define_hook("after_cache_hit", mutating=False,
+                        description="缓存命中")
+
+# 方式三：零定义触发——未注册的具名事件自动成为 dynamic 层钩子
+agent.hooks.hook("my_custom_event").emit(data=42)
 ```
 
-未注册的具名事件触发时自动成为动态钩子。扩展方式有三种：
-标准 29 钩子 / 自定义钩子 / 自定义层。
+- `HookLayer(name, order, description)` 声明一层；`layer.hook()`
+  返回 `Hook` 定义（即模块级 API），可提前导出供第三方
+  `subscribe(fn, system=reg)` 使用；
+- `install_layer` 按 `order` 排序层；**同名钩子已存在时保留原
+  定义**（只登记层元数据），重复安装不覆盖既有订阅；
+- `HookSystem` 查询 API：`list_hook_names()` / `list_hooks()` /
+  `layers()` / `layer_of(name)` / `get(name)`；
+- 自定义钩子照常支持 `subscribe / unsubscribe / emit / intercept`。
 
-### 9.3 每个执行结构都可覆写
+### 9.5 与 EventBus 的关系
 
-AgentRuntime 的七个执行结构同时是公共方法：`prepare_input /
-create_session / append_message / build_messages / call_model /
-execute_tool_call / finalize_result`。子类覆写即可替换，
-无需改动循环本体；或使用 `agent_runtime` 槽位整体替换循环类。
+钩子体系是事件总线的**结构化视图**，不是另一套机制：
 
-### 9.4 行为细节
+- `HookSystem` 构造时把 9 层标准层装到某条 `EventBus` 上，
+  订阅 / 发布最终都落在 `registry.bus`；
+- `reg.hooks.before_step.subscribe(fn)` 与
+  `reg.bus.subscribe(fn, "before_step")` **完全等价**，可混用；
+- 因此替换循环系统（async_loop 槽位）后钩子照常工作——钩子
+  挂在事件总线上，与循环实现无关（FAQ Q6）；
+- 事件名与早期 plugin_system 的 15 个 hook 完全一致，旧插件 /
+  旧代码无需修改（第 11 章插件钩子桥接即依赖这一点）；
+- 性能（0.9）：EventBus 采用写时复制——subscribe / unsubscribe
+  在锁内替换新列表，emit / intercept 取一次快照引用后无锁
+  迭代，高频流式事件（on_content 逐 token）不产生每事件列表
+  复制开销（第 14.3 节超高并发）。
 
-- 被阻止/否决/审批拒绝的工具调用统一流经 `after_tool_call`；
-- `before_step` 钩子否决本轮 → 跳过模型调用进入下一轮；
-- 钩子改写作用于实际数据流（消息/参数/结果）。
+### 9.6 每个执行结构都可覆写
+
+除钩子外，`AgentRuntime` 的七个执行结构同时是公共方法，子类
+覆写即可替换该环节，无需改动循环本体：
+
+```python
+from norpagent import AgentRuntime, ChatMessage
+
+class MyRuntime(AgentRuntime):
+    def build_messages(self, system_prompt, session_id, *, step,
+                       task_id, tool_names=None):
+        messages = super().build_messages(...)     # 先走 L5 钩子
+        messages.append(ChatMessage(role="system", content="自定义注入"))
+        return messages
+
+    def call_model(self, provider, history, schemas, params,
+                   task_id, result, step):
+        ...                                         # 完全接管 L7
+```
+
+方法清单：`prepare_input`（L3）/ `create_session`、
+`append_message`（L4）/ `build_messages`（L5）/ `call_model`
+（L7）/ `execute_tool_call`（L8）/ `finalize_result`（L9）。
+覆写与钩子的关系：默认实现**先走钩子再做默认逻辑**，覆写时可
+保留 super() 调用（钩子继续生效）或完全接管（跳过钩子）；
+也可以经 `agent_runtime` 槽位整体替换循环类（3.1 节）。
+
+### 9.7 行为细节与最佳实践
+
+- 被阻止 / 否决 / 审批拒绝的工具调用统一流经 `after_tool_call`
+  ——「执行结构」无论结果如何都过钩子；
+- `before_step` 否决本轮 → 跳过模型调用进入下一轮；`after_step`
+  只在有工具调用时广播（无工具调用时直接走最终回复路径）；
+- 钩子改写作用于**实际数据流**（消息 / 参数 / 结果），不是旁路
+  通知；改写后的值继续参与后续管线；
+- 重复订阅同一 fn 会执行多次：热挂载 hooks 槽位时框架先退订
+  架构级订阅再重挂（不叠加）；自己订阅的请配对 unsubscribe
+  （`EventBus.unsubscribe` 只移除首个相等元素）；
+- 高频钩子（on_content / on_reasoning 流式逐 token）里避免重
+  计算与阻塞 I/O；订阅者异常虽被隔离记录，但异常路径有开销；
+- 观测钩子（emit）的返回值被忽略——要干预数据流必须用可变
+  钩子（intercept）或方法覆写；
+- 线程安全：HookSystem / EventBus 的注册表操作均加锁，运行中
+  订阅 / 退订安全（3.7 节热挂载即依赖这一点）；
+- 需要干预但不想全局挂订阅者：把逻辑写成独立函数，配合任务级
+  params 显式开关（如 jailbreak_guard / harden_prompt，见
+  10.4 节），或只用 np(hooks=...) 槽位在指定引擎上订阅。
 
 ---
 
 ## 第 10 章　安全系统：norpagent.safe()
+
+> 一句话：`safe()` 把全套安全体系（越狱防护 / 提示词加固 /
+> 人工审批 / 网络策略 / 源码审计 / 导入限制 / 签名信任 /
+> 插件隔离策略）收敛为一个独立函数。配套文档 `docs/security.md`。
 
 ### 10.1 启用方式
 
 ```python
 import norpagent as np
 
-np(security="high")                      # 槽位方式（运行态策略，钩子零干预）
-np(security={"level": "high", "hooks": True})   # 槽位方式 + 显式钩子干预
-# 或：
+# 1. np() 槽位方式
+np(security="high")                                  # 字符串：只挂运行态策略，钩子零干预
+np(security={"level": "high", "hooks": True})        # dict：+ 显式钩子干预
+np(security=lambda reg: safe(reg, config={...}))     # callable：完全自定义装配
+
+# 2. safe() 直接方式
 from norpagent import safe
-safe(registry, level="standard")         # 直接方式（basic / standard / high）
-safe(registry, level="standard", hooks=True)    # 显式开启钩子干预
+kit = safe(registry, level="standard")               # basic / standard / high
+kit = safe(registry, level="standard", hooks=True)
+
+# 3. 两段式：先拿套件，稍后安装
 kit = safe(level="high")
-kit.install(registry)                    # 默认钩子零干预（不挂钩子）
-kit.install_hooks(registry)              # 需要干预时手动挂载
-kit.uninstall_hooks(registry)            # 随时卸下，恢复纯净钩子
+kit.install(registry)                                # 只挂运行态策略（默认不挂钩子）
+kit.install_hooks(registry)                          # 需要干预时手动挂载
+kit.uninstall_hooks(registry)                        # 随时卸下，恢复纯净钩子
 ```
 
-安全系统由独立函数 `safe()` 提供：内核不 import 任何
-`norpagent.security` 模块，防护/加固/审批/审计/签名通过
-`registry.security` 注入。**钩子零干预（默认）**：safe() 默认不订阅
-任何钩子，越狱防护与提示词加固不作为钩子订阅者自动挂到总线上，
-钩子管线保持纯净；需要干预时由用户显式开启（hooks=True /
-kit.install_hooks()），防护能力本身始终以独立 API 提供
-（kit.scan_input / kit.harden），用户可在自己的钩子订阅者或方法
-覆写中自由调用。
+设计要点——**安全系统整体剥离**：
+
+- 内核模块级不 import 任何 `norpagent.security` 模块；防护 /
+  加固 / 审批 / 审计 / 签名通过 `registry.security` 注入
+  （任务级参数显式要求时内核才惰性 import guard，见 10.4）；
+- **钩子零干预（默认）**：safe() 默认不订阅任何钩子——越狱
+  防护与提示词加固不作为钩子订阅者自动挂到总线上，钩子管线
+  保持纯净；需要干预时由用户显式开启（hooks=True /
+  kit.install_hooks()）；
+- 防护能力本身始终以**独立 API** 提供（kit.scan_input /
+  kit.harden / ...，10.5 节），用户可在自己的钩子订阅者或
+  方法覆写中自由调用；
+- 运行态决策（人工审批 / 网络策略 / 插件加载策略）始终经
+  `registry.security`（SecurityContext）生效，与钩子是否挂载
+  无关；
+- CLI 等价开关：`--safe basic|standard|high`（只挂运行态策略），
+  `--safe-hooks` 才显式挂钩子。
 
 ### 10.2 三档级别
 
@@ -1484,29 +1778,389 @@ kit.install_hooks()），防护能力本身始终以独立 API 提供
 | 插件工具人工审批 | | ✓ | ✓ |
 | 强制受信任签名 | | | ✓ |
 
-SafetyKit 提供独立检查 API（scan_input / harden / audit /
-verify_plugin / check_network / approval_policy），可单独使用；
-另有 install_hooks / uninstall_hooks / hooks_installed 控制钩子干预
-的显式挂载、卸载与查询。插件加载继承当前安全级别（config 缺省时
-采用 `registry.security.plugin_config()`）；未装 cryptography 时签名
-校验返回「不受信任」，不放行。详见 `docs/security.md`。
+- `basic`：只做输入防护与提示词加固（且默认不挂钩子，按需
+  显式开启），插件侧不设限制——适合信任来源的本地插件开发；
+- `standard`（默认）：+ 插件导入限制 safe、网络 deny、插件
+  工具审批，签名校验开启但不强制；
+- `high`：+ 审计 block（critical 即拒绝）、要求 manifest 权限
+  声明、强制受信任签名（未签名 / 不受信任一律拒绝加载）。
+
+### 10.3 SecurityContext：运行态安全策略的唯一事实源
+
+`registry.security` 是一个 `SecurityContext` 实例：AgentRuntime
+在工具审批时读取它，插件加载器在 config 缺省时读取它的
+`plugin_config()`。字段（safe(level=...) 预设后可用 config dict
+逐项覆盖，键名与 norpagent.security / 插件加载器配置一致）：
+
+| 字段 | 默认(standard) | 说明 |
+|---|---|---|
+| `level` | standard | basic / standard / high |
+| `guard_enabled` | True | 输入防护总开关（钩子干预路径） |
+| `harden_enabled` | True | 提示词加固总开关（钩子干预路径） |
+| `audit_level` | warn | off / warn / block |
+| `import_restrict` | safe | off / safe / strict |
+| `require_permissions` | False | manifest.permissions 强制 |
+| `signature_verify` | True | Ed25519 验签（invalid 拒绝） |
+| `signature_required` | False | True 时仅 trusted 放行 |
+| `trusted_keys` | [] | 受信任公钥 hex 列表 |
+| `network_policy` | deny | deny / audited_public / public_only / allow_all |
+| `approval_config` | None | 审批策略 dict（10.6） |
+| `plugin_isolation` | auto | auto / inproc / process |
+| `hook_intervention` | False | True = 安装时同步挂防护钩子 |
+| `extra` | {} | 扩展字段 |
+
+- `plugin_config()` 把本上下文转成插件加载器配置（config
+  缺省时的兜底）；`to_dict()` 输出完整姿态（与
+  `kit.describe()` 一致）；
+- `SecurityContext` 实例可直接作 `np(security=ctx)` 槽位值；
+- config 键名以插件加载器风格为主（plugin_security_audit /
+  plugin_network_policy / plugin_trusted_keys 等），另有直白键
+  guard_enabled / harden_enabled / hook_intervention / approval /
+  approval_config；safe() 的 `_apply_config` 统一映射到
+  SecurityContext。
+
+### 10.4 钩子干预（显式开启）
+
+`hooks=True` / `kit.install_hooks()` 挂载两个订阅者：
+
+- **L3 输入防护** = `before_input` 订阅者：命中越狱 / 注入特征
+  即抛 `HookVeto`（任务以 stopped 收尾）。任务级参数
+  `params["jailbreak_guard"] = False` 可显式关闭该任务的钩子
+  防护；`True`（或任意真值）走内核显式扫描路径——内核直接
+  scan_message，**不依赖钩子挂载状态**；
+- **L5 提示词加固** = `before_build_messages` 可变订阅者：把
+  核心规则与工具清单注入系统提示词。任务级参数
+  `params["harden_prompt"] = False` 可显式关闭该任务的加固；
+  `True` 走内核显式加固路径。
+
+挂载 / 卸载语义：
+
+- `kit.install_hooks(reg)` 幂等：同一注册表重复调用不叠加；
+- `kit.uninstall_hooks(reg)` 只移除**本套件自己的**订阅者，
+  不动用户 / 插件的其它订阅，钩子管线恢复纯净；
+- `kit.hooks_installed(reg)` 查询当前状态；
+- `kit.uninstall(reg)` 退订钩子订阅并清除 `registry.security`。
+  运行中热挂载 security 槽位（`np.remount(security=...)`）会
+  先 uninstall 旧套件再安装新套件，防同一总线上防护钩子叠加；
+- 热挂载后运行态决策立即生效；钩子干预对后续任务的
+  before_input / before_build_messages 生效。
+
+### 10.5 独立检查 API（不挂钩子也能用）
+
+SafetyKit 代理 norpagent.security 各模块，全部可直接单独调用：
+
+| 方法 | 对应能力 |
+|---|---|
+| `kit.scan_input(text)` → (blocked, reason, hits) | 越狱 / 注入扫描 |
+| `kit.is_jailbreak_attempt(text)` → bool | 扫描结果布尔化 |
+| `kit.harden(prompt, tool_names)` → str | 提示词加固 |
+| `kit.audit_file(path)` / `kit.audit_source(src)` → issues | 源码 AST 审计 |
+| `kit.verify_plugin(path, manifest)` → SignatureResult | 插件签名校验 |
+| `kit.check_network(url)` → bool | 按当前网络策略裁决（SSRF） |
+| `kit.approval_policy(hints)` → ApprovalPolicy | 审批策略实例 |
+| `kit.network_policy()` → NetworkPolicy | 网络策略实例 |
+| `kit.describe()` → dict | 当前安全姿态 |
+
+在自己的钩子订阅者里调用独立 API 的示例：
+
+```python
+from norpagent.hooks import HookVeto
+
+def my_guard(event):
+    blocked, reason, _ = kit.scan_input(event.get("user_input") or "")
+    if blocked:
+        raise HookVeto(reason or "输入被安全防护拦截")
+reg.hooks.before_input.subscribe(my_guard)
+```
+
+底层模块（`norpagent.security`，零框架依赖，可独立 import）：
+`guard`（扫描 / 加固）、`approval`（审批决策）、`network_policy`
+（SSRF 裁决）、`audit`（AST 审计）、`signature`（Ed25519，
+需 `norpagent[security]` 提供的 cryptography）。
+
+### 10.6 运行态决策点
+
+**人工审批**（AgentRuntime 工具执行路径）：
+
+- 策略来源优先级：`params["approval_policy"]` 实例 >
+  `params["approval_config"]` dict > `registry.security.approval_config`；
+- 原生工具按「工具名 → 级别」映射审批（file_write /
+  file_delete / exec_cmd 等 WRITE / DELETE / EXEC 级，含旧
+  工具名兼容）；插件工具走 `approval_enabled` 总开关 + 插件
+  `APPROVAL_HINTS` 精细控制（approval="none" 免审批，第 11 章）；
+- 交互由 UI 适配器经 `ctx.ask_user` 完成（随广播
+  on_user_input_required 钩子）；用户否定 → 调用被取消
+  （approval_denied），仍流经 after_tool_call。
+
+**网络策略 / SSRF 防护**（norpagent.security.network_policy）：
+
+- 四粒度：`deny`（默认）→ `audited_public`（须命中 URL /
+  域名白名单）→ `public_only`（禁内网）→ `allow_all`；
+- 除 allow_all 外，一律拒绝私网 / 环回 / 链路本地 / 保留段 /
+  云元数据地址（169.254.169.254 等）；先文本级判断再 DNS
+  解析复判（防 rebinding 常见路径）。
+
+**插件加载策略**：`install_plugin_dirs` 未显式给 config 时
+自动采用 `registry.security.plugin_config()`——安全系统剥离后，
+插件加载默认继承全局安全姿态（11.8 节）。
+
+### 10.7 安全不降级原则与深度防御
+
+- 未安装 cryptography 时签名校验返回「不受信任」，**不放行**
+  （安全姿态不降级）；`norpagent[security]` 提供验签能力；
+- 插件加载顺序固定：签名校验 → AST 审计 → 权限声明 → 导入
+  限制 → 注册（每阶段失败即拒绝，不进入下一阶段，11.3）；
+- 导入限制双层：AST 静态预检（防 sys.modules 已缓存模块绕过
+  meta_path）+ sys.meta_path 运行时拦截；
+- 进程级隔离（high / 自定义 config）把不可信插件移出主进程，
+  即便审计漏检，插件崩溃也不影响宿主（11.7）；
+- 内核侧 params 显式开关（jailbreak_guard / harden_prompt）
+  与 safe() 的钩子路径并存：只要有一条开启，防护就生效
+  （不依赖钩子挂载状态）。
+
+### 10.8 典型组合
+
+```python
+# 生产默认：standard + 显式钩子干预
+np(security={"level": "standard", "hooks": True})
+
+# 严格：high + 白名单网络 + 受信任密钥
+kit = safe(level="high", config={
+    "plugin_network_policy": "audited_public",
+    "plugin_network_domain_allowlist": ["api.example.com"],
+    "plugin_trusted_keys": ["<公钥hex>"],
+})
+np(security=kit.context)                     # 直接安装 SecurityContext
+
+# 纯决策、零干预：只用审批与网络策略，防护逻辑自己接
+np(security={"level": "standard",
+             "config": {"guard_enabled": False, "harden_enabled": False}})
+```
 
 ---
 
 ## 第 11 章　插件系统
 
+> 外部插件以独立 `.py` 文件（或 manifest 包）分发，宿主经
+> `norpagent.plugins` 加载器接入，自动获得签名校验 / AST 审计 /
+> 导入限制 / 网络策略 / 人工审批全套安全防护。插件格式与现有
+> 应用的 plugin_system 完全兼容，旧插件无需改代码即可迁移。
+> 配套文档：`docs/plugins.md`（宿主侧）、`norpagent插件开发指南.md`
+> （插件作者侧）。
+
+### 11.1 两种 API 与 np() 槽位
+
 ```python
-np(plugins=["./my_plugins"])     # 目录列表：签名→审计→导入限制→注册
+# 便捷入口：一次性加载目录
+from norpagent.plugins import install_plugin_dirs
+loader = install_plugin_dirs(reg, ["my_plugins"], config={...})
+
+# 库化门面：完整生命周期 + 状态 + 热重载
+from norpagent.plugins import PluginSystem
+ps = PluginSystem(reg, ["my_plugins"], config={"plugin_isolation": "auto"})
+infos = ps.load()        # 发现 → 安全加载 → 注册
+ps.status()              # 插件清单 + 隔离宿主状态
+ps.reload("my_tool")     # 开发期热重载单个插件
+ps.shutdown()            # 释放进程隔离宿主子进程
+
+# np() 槽位（literal 语义，目录列表）
+np(plugins=["./my_plugins"])
+# 运行中热替换：旧订阅自动退订，不叠加（3.7 节）
+np.remount(plugins=["./my_plugins_v2"])
 ```
 
-- 与现有应用插件格式兼容（模块级 PLUGIN_NAME / TOOLS / HOOKS 等）；
-- Ed25519 签名验证（`norpagent plugin-sign --gen` 生成密钥）；
-- 导入限制两层：AST 静态预检 + meta_path 运行时拦截；
-- 进程级隔离：`ISOLATION = "process"` 的插件在宿主子进程执行，
-  崩溃后自动重启；
-- `PluginSystem` 门面：load / reload / unload / status / shutdown。
+`np(plugins=[...])` 槽位以固定配置装配（audit=warn、验签开启，
+**不读取** registry.security 的覆盖）；需要精细配置用
+PluginSystem / install_plugin_dirs 直接操作 Registry（或
+callable 槽位值，如 `np(plugins=lambda reg: ps.load())`）。
 
----
+### 11.2 插件格式（与现有应用兼容）
+
+**模块级接口**（单文件插件 `my_plugin.py`）：
+
+| 名称 | 类型 | 说明 |
+|---|---|---|
+| `PLUGIN_NAME` | str | 插件显示名（必填） |
+| `PLUGIN_VERSION` | str | 版本，默认 0.0.0 |
+| `PLUGIN_PUBLISHER` | str | 发布者 |
+| `PLUGIN_DESCRIPTION` | str | 描述 |
+| `TOOLS` | list | OpenAI function schema 列表 |
+| `execute(tool_name, args, ctx)` | callable | 工具统一入口，返回 str / None |
+| `APPROVAL_HINTS` | dict | 工具 → 审批提示（11.8） |
+| `ISOLATION` | str | `"process"` = 进程级隔离（AST 静态读取，不执行代码） |
+| `__norpagent_type__` | str | 文件即模块类型声明（"tool" / "plugin"，FLOW 拖入用） |
+| 15 个钩子函数 | callable | 与旧应用 hook 名完全对齐（11.5 桥接） |
+
+```python
+# my_plugin.py —— 最小插件
+PLUGIN_NAME = "greet_plugin"
+TOOLS = [{
+    "type": "function",
+    "function": {
+        "name": "greet",
+        "description": "向用户打招呼",
+        "parameters": {"type": "object",
+                       "properties": {"name": {"type": "string"}},
+                       "additionalProperties": False},
+    },
+}]
+
+def execute(tool_name, args, ctx):
+    if tool_name == "greet":
+        return f"你好，{args.get('name') or 'world'}！"
+    return None
+```
+
+**manifest 包格式**：目录 + `manifest.json`（name / version /
+publisher / description / entry 默认 plugin.py / permissions /
+signature / isolation 字段）。
+
+### 11.3 安全管线（加载全流程）
+
+```
+发现（目录扫描：*.py 单文件 / manifest 包）
+  → before_plugin_load（HookVeto 可拒，11.4）
+  → 1. 签名校验：invalid 直接拒绝；signature_required 时仅 trusted 放行
+  → 2. 信任分级：受信任签名 → 审计放宽为 warn
+  → 3. AST 审计：危险调用 / 危险导入 / getattr、__dict__ 反射绕过检测，
+       block 级发现 critical 即拒绝
+  → 4. 权限声明：require_permissions 时校验 manifest.permissions
+  → 5. 隔离决策：process → 插件只在宿主子进程加载（11.7）
+  → 6. 导入限制下加载模块（静态预检 + meta_path 拦截，11.6）
+  → 7. 读取元数据（PLUGIN_NAME / TOOLS / 钩子 / APPROVAL_HINTS）
+  → before_plugin_register（HookVeto 可拒）
+  → 8. 适配为 Plugin 协议 → 注册进 Registry（工具入表、钩子订阅总线）
+```
+
+每阶段失败 → `PluginInfo(enabled=False, error=...)` 记录原因后
+**继续扫描其它插件**，不中断整体加载。`PluginInfo` 携带
+`name / path / version / publisher / description / enabled /
+error / tools / hook_names / signature_status / trusted /
+approval_hints / audit_issues`；调试时看
+`loader.plugins[i].error` 与 `audit_issues`（含行号）。
+
+### 11.4 加载管线钩子（自定义层的标准库用例）
+
+PluginSystem 构造时把 `PLUGIN_PIPELINE_LAYER`（order=200 的
+自定义 HookLayer，9.4 节能力的官方示例）装进 `registry.hooks`，
+8 个管线钩子：
+
+`before/after_plugin_discover`、`before/after_plugin_load`、
+`before/after_plugin_audit`、`before/after_plugin_register`。
+
+```python
+from norpagent.hooks import HookVeto
+from norpagent.plugins import before_plugin_load
+
+def block_listed(event):
+    if (event.get("name"), event.get("path")) in HOST_BLOCKLIST:
+        raise HookVeto("该插件被宿主策略拒绝")
+before_plugin_load.subscribe(block_listed, system=reg)
+```
+
+- 可变管线钩子（before_plugin_load / before_plugin_audit /
+  before_plugin_register）抛 HookVeto = 拒绝该插件的加载 /
+  注册（enabled=False + error 记录原因）；after_* 为观测钩子
+  （after_plugin_audit 负载含 allowed / issues）；
+- 管线钩子经 `registry.hooks.hook(name)` 动态注册，与插件模块
+  级 hook 互不冲突。
+
+### 11.5 旧插件钩子桥接（15 个 hook 对齐）
+
+插件模块级定义的钩子函数（on_task_start / before_step /
+before_tool_call / after_tool_call 等 15 个）由加载器包装成
+EventBus 订阅者：
+
+- 签名约定：**业务参数在前，PluginContext 在最后**（ctx 提供
+  plugin_name / project_root / app_dir / config / current_step）；
+- 可变钩子（before_step / before_tool_call / after_tool_call）
+  的返回值经 intercept 透传给内核，其余钩子返回值忽略；
+- 事件 payload → 旧参数列表的映射与现有应用 plugin_system
+  派发逻辑完全一致（loader._HOOK_ARG_KEYS），旧插件零改动迁移；
+- 进程隔离插件同样经此桥接：fire_hook RPC 转发（限时 5s）。
+
+### 11.6 导入限制
+
+- `off`：不限制（本地调试用；受信任签名只放宽审计，导入限制
+  仍按配置执行）；
+- `safe`（standard / high 默认）：阻断危险模块（subprocess /
+  ctypes / cffi / socket / pickle / marshal / telnetlib / ftplib /
+  smtplib；ctypes / cffi 无条件阻断），**双层防护**：AST 静态
+  预检（防 sys.modules 已缓存模块绕过 meta_path）+ 加载期
+  sys.meta_path 拦截（栈帧探测调用方是否为插件模块）；
+- `strict`：仅允许安全模块白名单（json / re / datetime / math /
+  random / collections / itertools / functools / typing / enum /
+  pathlib / os.path / textwrap / string / hashlib / base64 /
+  traceback / logging / warnings / copy / uuid / time /
+  norpagent.protocols.tool 等），白名单外一律 ImportError。
+
+插件模块以 `norpagent_ext_<name>` 模块名加载（命名空间统一），
+限制器**只对插件模块生效**，不影响宿主代码。
+
+### 11.7 进程级隔离
+
+`ISOLATION = "process"`（模块常量，AST 静态读取，**不执行插件
+代码**）/ manifest `isolation` 字段 / 宿主配置
+`plugin_isolation`（auto 时取前两者；显式 inproc / process 时
+强制）。隔离语义：
+
+- 插件模块对象只存在于宿主子进程（`python -m
+  norpagent.plugins.host`，JSON 行协议 RPC）；
+- 工具执行经 RPC 回传；钩子经 fire_hook 转发，单次钩子限时
+  5s（HOOK_TIMEOUT），超时放弃——插件钩子永不拖死主循环；
+- 崩溃自愈：子进程死亡 → 自动重启 + 重载全部插件 → 重试一次；
+- 工具错误不冒泡：远端异常转为失败 ToolResult；
+- 导入限制在子进程内继续生效（纵深防御）。
+
+### 11.8 与安全系统的联动
+
+- `install_plugin_dirs(reg, dirs)` **不传 config** 时自动采用
+  `registry.security.plugin_config()`——先 `safe(reg, ...)` 再
+  装插件，插件加载即继承全局安全姿态（注意：np(plugins=...)
+  槽位路径传固定 config，不读 registry.security）；
+- `safe(level="high")` 对插件的影响：审计 block、强制权限
+  声明、强制受信任签名（未签名 / 不受信任拒绝）；
+- 信任机制：`python -m norpagent plugin-sign --gen` 生成密钥对，
+  `plugin-sign my_plugin.py --key <私钥hex>` 生成签名；公钥加入
+  `plugin_trusted_keys` 后该插件受信任 → 审计放宽为 warn
+  （导入限制按配置执行，不受信任影响）；
+- 网络访问由宿主 `plugin_network_policy` 裁决（默认 deny），
+  插件自身无法绕过——策略执行于宿主进程（10.6 节）；
+- 审批：插件工具默认走 `approval_enabled` 总开关；插件
+  `APPROVAL_HINTS` 里 `{"approval": "none", "risk": "L0"}` 可
+  对单个工具免审批，未声明的工具走总开关（向后兼容）。
+
+### 11.9 配置键总表与生命周期
+
+```python
+config = {
+    "plugin_security_audit": "warn",            # off / warn / block
+    "plugin_security_import_restrict": "off",   # off / safe / strict
+    "plugin_security_require_permissions": False,
+    "plugin_signature_verify": True,
+    "plugin_signature_required": False,         # True: 仅 trusted 放行
+    "plugin_trusted_keys": ["<公钥hex>"],
+    "plugin_network_policy": "deny",            # deny/audited_public/public_only/allow_all
+    "plugin_network_url_allowlist": ["https://api.example.com/"],
+    "plugin_network_domain_allowlist": ["api.example.com"],
+    "approval_enabled": True,                   # 插件工具审批总开关
+    "plugin_isolation": "auto",                 # auto / inproc / process
+}
+```
+
+生命周期注意：
+
+- `ps.load()` 可重复调用（先清空清单再重扫）；`ps.configure()`
+  更新配置并使加载器失效重建；
+- `ps.unload(name)` / `ps.reload(name)` 是开发期工具：旧实例的
+  工具 / 钩子订阅仍留在 Registry（工具表为名字覆盖语义，钩子
+  不支持按名整体退订），**生产环境建议重建 Registry 后重新
+  加载**；
+- 运行中整体替换用 `np.remount(plugins=[...])`：框架先退订旧
+  架构级插件订阅再重装（防叠加，3.7 节）；
+- `ps.shutdown()` / `loader.shutdown()` 释放进程隔离宿主子进程；
+  热挂载 plugins 槽位（`np.remount(plugins=...)`）时框架自动先
+  卸载旧加载器（退订钩子 + 清 sys.modules + 释放隔离宿主）。
 
 ## 第 12 章　预设模式
 
@@ -2015,6 +2669,9 @@ applier=...))`。注册即接入 `np()` 参数校验、装配、`np.remount()`
 | L8 工具 | before_tool_call / after_tool_call / on_tool_error | 两者 | tool_name, args, result |
 | L9 定型 | before_result / after_result | 两者 | result |
 
+> 完整负载键与 29 钩子全表见 9.1 节；可变钩子的完整返回语义（HookVeto 收尾 / 改写规则）见 9.3 节。
+> 插件加载管线另有 8 个钩子（PLUGIN_PIPELINE_LAYER），见 11.4 节。
+
 ## 附录 C　公开 API 索引
 
 ```python
@@ -2069,8 +2726,18 @@ from norpagent import (Registry, EventBus, Preset, AgentRuntime,
 
 # 安全 / 钩子 / 插件
 from norpagent import safe, SafetyKit, SecurityContext
-from norpagent import hooks
-from norpagent.plugins import PluginSystem, install_plugin_dirs
+from norpagent import hooks                      # 钩子系统（HookSystem）
+from norpagent.hooks import (Hook, BoundHook, HookLayer, HookSystem,
+                             HookVeto, get_default_system,
+                             before_input, before_model_call,
+                             before_tool_call, after_tool_call, ...)  # 29 个标准钩子
+from norpagent.plugins import (PluginSystem, PluginLoader, PluginInfo,
+                               install_plugin_dirs, PLUGIN_PIPELINE_LAYER,
+                               before_plugin_load, after_plugin_register, ...)
+from norpagent.plugins.isolation import ProcessIsolationManager, ProcessPluginHost
+from norpagent.security import (scan_message, harden_system_prompt,
+                                ApprovalPolicy, NetworkPolicy, SourceAuditor,
+                                SignatureVerifier, generate_keypair, sign_plugin_file)
 
 # Web UI：SSE 背压（超高并发，第 14.3 节）
 from norpagent.builtin.ui.web import WebUI
