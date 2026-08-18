@@ -27,7 +27,7 @@ import threading
 from typing import Any, Dict, Optional
 
 from norpagent.arch.layer import ArchLayer
-from norpagent.arch.slots import SLOT_SPECS
+from norpagent.arch.slots import snapshot_slots
 from norpagent.runtime.engine import EngineError, EngineState, NorpEngine
 from norpagent.runtime.mount import build_registry, mount_defaults
 
@@ -47,11 +47,13 @@ def launch(**kwargs: Any) -> NorpEngine:
     """np() 的实现：按架构层装配并启动一个 Agent 应用。
 
     关键字参数分两类：
-    - 架构槽位：与 norpagent.arch.slots.SLOT_SPECS 同名的键
-      （async_loop / agent_runtime / model / tools / session / sandbox /
-      scheduler / context_store / project_manager / hooks / security /
-      plugins / frontend / ui / preset / logger / storage / error_handler），
-      不填 = 默认逻辑，填地址 = 按地址接上实现；
+    - 架构槽位：与 norpagent.arch.slots 槽位表同名的键
+      （18 个内置槽位 async_loop / agent_runtime / model / tools /
+      session / sandbox / scheduler / context_store /
+      project_manager / hooks / security / plugins / frontend / ui /
+      preset / logger / storage / error_handler，加上运行时经
+      register_slot() 注册的自定义槽位），不填 = 默认逻辑，
+      填地址 = 按地址接上实现；
     - 运行时参数：其余键全部作为任务参数透传 Agent 循环
       （如 max_steps / task_timeout / workspace_root 等）。
 
@@ -68,9 +70,11 @@ def launch(**kwargs: Any) -> NorpEngine:
         if _current is not None and _current.is_running():
             return _current
 
-        # 拆分槽位键与运行时参数键
-        slot_values = {k: v for k, v in kwargs.items() if k in SLOT_SPECS}
-        params = {k: v for k, v in kwargs.items() if k not in SLOT_SPECS}
+        # 拆分槽位键与运行时参数键（按实时槽位表：含运行时注册的
+        # 自定义槽位；注册在 np() 调用之前即可被识别为槽位）
+        slots = snapshot_slots()
+        slot_values = {k: v for k, v in kwargs.items() if k in slots}
+        params = {k: v for k, v in kwargs.items() if k not in slots}
 
         layer = ArchLayer(config, **slot_values)
         mount_defaults(layer, prompt=prompt)

@@ -7,15 +7,28 @@
     from norpagent import safe, Registry
 
     reg = Registry()
-    safe(reg, level="standard")        # 一句话开启全套安全，返回 SafetyKit
+    safe(reg, level="standard")        # 一句话挂载全套安全策略，返回 SafetyKit
 
     kit = safe(level="high")           # 或先拿套件，稍后安装
-    kit.install(reg)
+    kit.install(reg)                   # 默认钩子零干预（不挂钩子）
+    kit.install_hooks(reg)             # 需要干预数据流时显式挂载
 
-实现方式（与 9 层钩子体系同构）：
+钩子零干预（默认）：safe() 默认**不订阅任何钩子**——越狱防护与提示词
+加固不再作为钩子订阅者自动挂到总线上，钩子管线保持纯净，干预与否
+完全由用户决定。安全系统只通过 ``registry.security``（SecurityContext）
+提供运行态决策（人工审批 / 网络策略 / 插件加载策略）。需要钩子干预
+时由用户显式开启：::
 
+    safe(reg, level="standard", hooks=True)   # 安装时立即挂钩子
+    kit.install_hooks(reg)                    # 或之后手动挂载
+    kit.uninstall_hooks(reg)                  # 随时卸下，恢复纯净钩子
+
+钩子干预内容（仅当显式开启时）：
 - 输入防护 = L3 ``before_input`` 钩子订阅者（命中即 HookVeto）；
-- 提示词加固 = L5 ``before_build_messages`` 可变钩子（改写系统提示词）；
+- 提示词加固 = L5 ``before_build_messages`` 可变钩子（改写系统提示词）。
+防护能力本身始终以独立 API 提供（kit.scan_input / kit.harden / ...），
+用户可在自己的钩子订阅者或方法覆写中自由调用。
+
 - 人工审批 / 网络策略等运行态决策 = ``registry.security``（SecurityContext），
   由 AgentRuntime 与插件加载器读取；
 - 插件加载管线 = ``SecurityContext.plugin_config()`` 默认配置，
@@ -53,10 +66,12 @@ VALID_LEVELS = (LEVEL_BASIC, LEVEL_STANDARD, LEVEL_HIGH)
 class SecurityContext:
     """registry.security — 运行态安全策略的唯一事实源。
 
-    AgentRuntime 在每次输入扫描 / 提示词加固 / 工具审批时读取本对象；
-    插件加载器在 config 缺省时读取 ``plugin_config()``。
-    ``params`` 里的显式开关（jailbreak_guard / harden_prompt / approval_*）
-    优先级高于本上下文——安全可收紧，不被任务参数悄悄放宽。
+    AgentRuntime 在工具审批时读取本对象；插件加载器在 config 缺省时
+    读取 ``plugin_config()``。钩子干预（输入防护 / 提示词加固的自动
+    订阅）由 ``hook_intervention`` 控制，默认 False——安全系统不挂钩子，
+    钩子管线保持纯净；用户可置 True 或用 ``kit.install_hooks()`` 显式
+    开启。``params`` 里的显式开关（jailbreak_guard / harden_prompt /
+    approval_*）优先级高于本上下文——安全可收紧，不被任务参数悄悄放宽。
     """
 
     level: str = LEVEL_STANDARD
@@ -71,6 +86,7 @@ class SecurityContext:
     network_policy: str = POLICY_DENY    # deny / audited_public / public_only / allow_all
     approval_config: Optional[Dict[str, Any]] = None
     plugin_isolation: str = "auto"       # auto / inproc / process
+    hook_intervention: bool = False      # True：安装时同步挂载防护钩子（默认不挂钩子）
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def plugin_config(self) -> Dict[str, Any]:
@@ -98,6 +114,7 @@ class SecurityContext:
             "level": self.level,
             "guard_enabled": self.guard_enabled,
             "harden_enabled": self.harden_enabled,
+            "hook_intervention": self.hook_intervention,
             "approval_config": dict(self.approval_config or {}),
             "extra": dict(self.extra),
         })
@@ -107,22 +124,50 @@ class SecurityContext:
 class SafetyKit:
     """安全套件：safe() 的返回值。
 
-    - ``install(registry)``：挂载 SecurityContext + 钩子订阅者；
+    - ``install(registry, hooks=...)``：挂载 SecurityContext；默认不挂钩子；
+    - ``install_hooks / uninstall_hooks``：显式挂载/卸下钩子干预
+      （L3 输入防护 + L5 提示词加固）；
     - 一组直接可用的独立安全检查 API（代理 norpagent.security）。
     """
 
     def __init__(self, context: SecurityContext) -> None:
         self.context = context
         self._installed: List[Any] = []
+        self._hook_registries: List[Any] = []
         self._hook_subscriptions: List[Tuple[Any, str]] = []
         self._approval_cache: Optional[ApprovalPolicy] = None
         self._network_cache: Optional[NetworkPolicy] = None
 
     # ── 安装 ──────────────────────────────────────────────
 
-    def install(self, registry: Any) -> "SafetyKit":
-        """把全套安全策略装到注册表：SecurityContext + 钩子订阅者。"""
+    def install(self, registry: Any, *, hooks: Optional[bool] = None) -> "SafetyKit":
+        """把安全策略装到注册表：SecurityContext（+ 可选钩子订阅者）。
+
+        默认 hooks=None → 取 ``context.hook_intervention``（默认 False），
+        即**不订阅任何钩子**：越狱防护与提示词加固不作为钩子订阅者
+        干预数据流，钩子管线保持纯净。hooks=True（或上下文置位）时
+        同步挂载 before_input / before_build_messages 订阅者，
+        等价于 install 后调用 install_hooks。
+        """
+        if registry in self._installed:
+            self.uninstall(registry)
         registry.security = self.context
+        self._installed.append(registry)
+        want_hooks = self.context.hook_intervention if hooks is None else hooks
+        if want_hooks:
+            self.install_hooks(registry)
+        return self
+
+    def install_hooks(self, registry: Any) -> "SafetyKit":
+        """显式挂载钩子干预：L3 输入防护 + L5 提示词加固。
+
+        安全系统默认不挂钩子；调用本方法才把越狱拦截与提示词加固
+        接入 before_input / before_build_messages。幂等：同一注册表
+        重复调用不会叠加订阅者。建议先 install（或在 install 时
+        传 hooks=True）。
+        """
+        if registry in self._hook_registries:
+            return self
         hooks = registry.hooks
 
         # L3 输入防护：命中即 HookVeto（任务以 stopped 收尾）。
@@ -162,8 +207,30 @@ class SafetyKit:
                 (harden_wrapper, "before_build_messages")
             )
 
-        self._installed.append(registry)
+        self._hook_registries.append(registry)
         return self
+
+    def uninstall_hooks(self, registry: Any) -> "SafetyKit":
+        """卸下钩子干预：退订本套件挂载的全部钩子订阅者。
+
+        只移除本套件自己的订阅者，不动用户/插件的其它订阅——
+        钩子管线恢复纯净。安全上下文（registry.security）保留，
+        运行态决策（审批/网络/插件策略）不受影响。
+        """
+        if registry not in self._hook_registries:
+            return self
+        for fn, event_name in self._hook_subscriptions:
+            try:
+                registry.bus.unsubscribe(fn, event_name)
+            except Exception:  # noqa: BLE001 — 总线状态异常不阻塞卸载
+                pass
+        self._hook_subscriptions.clear()
+        self._hook_registries.remove(registry)
+        return self
+
+    def hooks_installed(self, registry: Any) -> bool:
+        """该注册表上是否已挂载本套件的钩子干预订阅者。"""
+        return registry in self._hook_registries
 
     def uninstall(self, registry: Any) -> None:
         """卸载本套件：退订钩子订阅者、清除安全上下文。
@@ -171,12 +238,7 @@ class SafetyKit:
         运行中热挂载 security 槽位时先 uninstall 旧套件再安装新套件，
         避免同一总线上重复叠加防护钩子。
         """
-        for fn, event_name in self._hook_subscriptions:
-            try:
-                registry.bus.unsubscribe(fn, event_name)
-            except Exception:  # noqa: BLE001 — 总线状态异常不阻塞卸载
-                pass
-        self._hook_subscriptions.clear()
+        self.uninstall_hooks(registry)
         try:
             if getattr(registry, "security", None) is self.context:
                 registry.security = None
@@ -291,6 +353,7 @@ def _apply_config(ctx: SecurityContext, config: dict) -> None:
         "plugin_signature_required": ("signature_required", bool),
         "plugin_network_policy": ("network_policy", str),
         "plugin_isolation": ("plugin_isolation", str),
+        "hook_intervention": ("hook_intervention", bool),
     }
     for key, (attr, cast) in mapping.items():
         if key in config and config[key] is not None:
@@ -306,22 +369,30 @@ def _apply_config(ctx: SecurityContext, config: dict) -> None:
 
 
 def safe(registry: Any = None, *, level: str = LEVEL_STANDARD,
-         config: Optional[dict] = None, **overrides: Any) -> SafetyKit:
-    """norpagent.safe() — 一句话开启全套安全系统。
+         config: Optional[dict] = None, hooks: Optional[bool] = None,
+         **overrides: Any) -> SafetyKit:
+    """norpagent.safe() — 一句话挂载全套安全系统（钩子零干预默认）。
 
     用法::
 
-        safe(reg)                          # standard 级
-        safe(reg, level="high")            # 严格级
+        safe(reg)                            # standard 级，只挂运行态策略
+        safe(reg, level="high")              # 严格级，不挂钩子
+        safe(reg, level="high", hooks=True)  # 显式开启钩子干预
         kit = safe(level="basic", config={...})  # 自定义，稍后 kit.install(reg)
+        kit.install_hooks(reg)               # 之后随时手动挂钩子
 
-    ``registry`` 给定时立即安装（SecurityContext + 输入防护/提示词加固钩子），
-    返回 SafetyKit；不给定则返回未安装的套件。``config`` / ``**overrides``
-    可逐项覆盖预设（键名与 norpagent.security / 插件加载器配置一致）。
+    ``registry`` 给定时立即安装 SecurityContext；默认**不订阅任何钩子**
+    （越狱防护与提示词加固不以钩子形式干预数据流，钩子管线保持纯净）。
+    ``hooks=True`` 或 config/overrides 中的 ``hook_intervention=True``
+    才在安装时同步挂载 before_input / before_build_messages 订阅者；
+    也可事后用 ``kit.install_hooks(reg)`` 显式挂载、
+    ``kit.uninstall_hooks(reg)`` 随时卸下。返回 SafetyKit；registry
+    不给定则返回未安装的套件。``config`` / ``**overrides`` 可逐项覆盖
+    预设（键名与 norpagent.security / 插件加载器配置一致）。
     """
     kit = SafetyKit(_build_context(level, config, overrides or None))
     if registry is not None:
-        kit.install(registry)
+        kit.install(registry, hooks=hooks)
     return kit
 
 

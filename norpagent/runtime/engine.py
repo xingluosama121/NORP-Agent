@@ -190,7 +190,10 @@ class NorpEngine:
           context_store / project_manager / agent_runtime / preset）：
           AgentRuntime 热重建（停旧沙箱 → 建新运行时 → 前端重绑）；
         - 基础设施槽位（frontend / async_loop）：停旧实现、启新实现；
-        - 基础服务槽位（logger / storage / error_handler）：更新引擎。
+        - 基础服务槽位（logger / storage / error_handler）：更新引擎；
+        - 自定义槽位（register_slot 注册，v0.9）：按规格 applier
+          重新应用；规格声明 remount_rebuild_agent=True 时同样
+          热重建 AgentRuntime。
 
         重复挂载的架构级订阅（钩子 / 安全 / 插件）会先退订再重挂，
         不会叠加重复触发。

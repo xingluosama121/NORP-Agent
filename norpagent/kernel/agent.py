@@ -198,7 +198,8 @@ class AgentRuntime:
             return self.finalize_result(result, task_id)
 
         # ── 越狱/注入防护（params["jailbreak_guard"] 显式路径；
-        #    norpagent.safe() 安装的钩子路径在 before_input 处已完成） ──
+        #    norpagent.safe() 的钩子路径仅在用户显式开启时（hooks=True /
+        #    install_hooks）才在 before_input 处生效） ──
         guard_config = params.get("jailbreak_guard")
         if guard_config:
             from norpagent.security.guard import scan_message

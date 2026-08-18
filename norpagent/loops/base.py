@@ -2,10 +2,10 @@
 """LoopRuntime 协议：事件循环系统的统一契约。
 
 ``async_loop`` 槽位（即架构函数 norpagent.nasyncio()）的实现
-必须满足本协议。默认实现是标准 asyncio 适配器
-（norpagent.loops.std_asyncio.StdLoopRuntime）；填入地址即可
-替换成任意事件循环系统——例如把自研 nasync_io 移植为一个
-LoopRuntime 模块，整个框架的调度核心即被整体替换。
+必须满足本协议。默认实现是库内置**自研 nasyncio 适配器**
+（norpagent.loops.nasyncio.NasyncioLoopRuntime，调度核心为
+norpagent.nasyncio，不依赖标准 asyncio）；填入地址即可
+替换成任意事件循环系统，整个框架的调度核心即被整体替换。
 
 循环系统与 Agent 逻辑彻底解耦：引擎（runtime.engine）只通过
 本协议与循环交互，不 import 任何具体循环实现。
@@ -25,7 +25,8 @@ class LoopRuntime(Protocol):
 
     - start() 之后循环进入可提交状态；
     - submit() 在循环上下文中执行同步函数并返回其结果
-      （实现可自由选择真实异步或线程池模拟）；
+      （实现可自由选择真实异步或线程池模拟；
+      默认的自研 nasyncio 实现 = 自研事件循环线程 + 守护工作池）；
     - stop() 与 join() 支持从任意线程调用，用于收尾。
     """
 

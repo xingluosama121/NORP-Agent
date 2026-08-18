@@ -35,16 +35,23 @@ np() 启动后引擎仍在 RUNNING 状态下，随时替换任意槽位实现：
 4. **基础服务槽位**（logger / storage / error_handler）：直接更新
    引擎引用，无需重建任何结构。
 
+5. **自定义槽位**（v0.9 槽位表热插拔）：register_slot() 注册的槽位
+   同样可 np.remount——按规格的 applier 重新应用（须重入安全）；
+   规格声明 remount_rebuild_agent=True 的自定义装配槽位替换后热
+   重建 AgentRuntime，与内置装配槽位语义一致。
+
 任何槽位都可以 remount —— 这就是「除了底层最小内核外，全部组件
-都是槽位」在运行时的体现：拼装体可以边跑边换零件。
+都是槽位」在运行时的体现：拼装体可以边跑边换零件；槽位表本身
+也可以边跑边插新槽位（register_slot）。
 """
 
 from __future__ import annotations
 
 import dataclasses
+import inspect
 from typing import Any, FrozenSet
 
-from norpagent.arch.slots import SLOT_SPECS
+from norpagent.arch.slots import snapshot_slots
 from norpagent.kernel.presets import Preset
 from norpagent.runtime.engine import EngineError
 from norpagent.runtime.mount import apply_slot_overrides
@@ -70,10 +77,11 @@ def remount_engine(engine: Any, **slot_values: Any) -> Any:
     """
     if not slot_values:
         raise EngineError("热挂载至少需要一个槽位参数")
-    unknown = [k for k in slot_values if k not in SLOT_SPECS]
+    known = snapshot_slots()
+    unknown = [k for k in slot_values if k not in known]
     if unknown:
         raise EngineError(
-            f"未知槽位 {unknown}。可用槽位: {list(SLOT_SPECS)}"
+            f"未知槽位 {unknown}。可用槽位: {list(known)}"
         )
 
     layer = engine.layer
@@ -95,7 +103,13 @@ def remount_engine(engine: Any, **slot_values: Any) -> Any:
     logger = engine._logger
 
     # 4. 装配槽位：热重建 Agent 运行时。
-    if _AGENT_REBUILD_SLOTS & set(slot_values) and engine._agent is not None:
+    #    内置装配槽位集合 + 自定义槽位规格的 remount_rebuild_agent
+    #    标志共同决定（v0.9 槽位表热插拔）。
+    rebuild = bool(_AGENT_REBUILD_SLOTS & set(slot_values)) or any(
+        bool(getattr(known.get(k), "remount_rebuild_agent", False))
+        for k in slot_values
+    )
+    if rebuild and engine._agent is not None:
         engine._swap_agent()
 
     # 5. 基础设施槽位：前端 / 事件循环停旧启新。
@@ -136,10 +150,55 @@ def _apply_preset(engine: Any, final: Preset) -> None:
             pass
 
 
+# WebFrontend.attach 会从 engine.params 读 port/host/open_browser/language/
+# html 并覆盖构造值。这些键在初次启动时来自 np() 的参数透传；热挂载时若不
+# 处理，它们会把本次 remount 传入的新值压回去（比如启动时 np(html=...)
+# 会让 remount(frontend="...;html=其他页") 永远不生效）。
+# 屏蔽规则：只有本次 remount **显式给出**的键才屏蔽启动参数；未显式给出的
+# 键（如 port）沿用启动参数——这样「换页面」热挂载后浏览器 URL 不变。
+_WEB_ATTACH_PARAM_KEYS: FrozenSet[str] = frozenset((
+    "port", "host", "open_browser", "language", "html",
+))
+
+
+def _explicit_web_keys(engine: Any, new_impl: Any) -> FrozenSet[str]:
+    """本次 remount 显式给出的 web 参数键。
+
+    - 字符串地址：分句（";key=value"）中的键为显式；
+    - 实例：构造参数中与默认值不同的键为显式（html 以 _html 属性
+      判定，None 视为未给）。自定义实现无法反射时返回空集
+      （全部沿用启动参数，行为安全）。
+    """
+    raw = engine.layer.config.get("frontend")
+    if isinstance(raw, str):
+        sub = engine.layer._subconfigs.get("frontend", {}) or {}
+        return frozenset(k for k in sub if k in _WEB_ATTACH_PARAM_KEYS)
+    try:
+        sig = inspect.signature(type(new_impl).__init__)
+    except Exception:  # noqa: BLE001
+        return frozenset()
+    keys = set()
+    for name, param in sig.parameters.items():
+        if name not in _WEB_ATTACH_PARAM_KEYS:
+            continue
+        if param.default is inspect.Parameter.empty:
+            continue
+        if name == "html":
+            actual, default = getattr(new_impl, "_html", None), None
+        else:
+            actual, default = getattr(new_impl, name, None), param.default
+        if actual != default:
+            keys.add(name)
+    return frozenset(keys)
+
+
 def _swap_frontend(engine: Any) -> None:
     """热替换 frontend 槽位：停旧前端 → 接新前端 → 启动。
 
-    新前端 attach / start 失败时回滚旧前端（尽力而为）。
+    attach 期间临时屏蔽 engine.params 里本次 remount 显式给出的
+    web 键，让 remount 值成为权威；attach 完成后恢复（params 同时
+    承担任务参数透传职责，需保持原样）。新前端 attach / start 失败
+    时回滚旧前端（尽力而为）。
     """
     old = engine.frontend
     new_impl = engine.layer["frontend"]
@@ -151,6 +210,8 @@ def _swap_frontend(engine: Any) -> None:
         except Exception:  # noqa: BLE001
             pass
     engine.frontend = new_impl
+    params = getattr(engine, "params", None) or {}
+    shielded = {k: params.pop(k, None) for k in _explicit_web_keys(engine, new_impl)}
     try:
         new_impl.attach(engine)
         new_impl.start()
@@ -164,6 +225,9 @@ def _swap_frontend(engine: Any) -> None:
             except Exception:  # noqa: BLE001
                 pass
         raise
+    finally:
+        if shielded:
+            params.update(shielded)
 
 
 def _swap_loop(engine: Any) -> None:

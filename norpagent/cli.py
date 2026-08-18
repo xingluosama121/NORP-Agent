@@ -35,12 +35,14 @@ def _build_registry(args: Any) -> Registry:
     install_defaults(reg)
     register_all_presets(reg)
     # norpagent.safe()：一句话开启全套安全（basic/standard/high）
+    # 默认钩子零干预：只挂运行态策略，不挂钩子；--safe-hooks 才显式挂钩子。
     safe_level = getattr(args, "safe", None)
     if safe_level:
         from norpagent import safe
 
-        kit = safe(reg, level=safe_level)
-        print(f"[安全] norpagent.safe() 已开启（级别: {safe_level}）")
+        kit = safe(reg, level=safe_level, hooks=bool(args.safe_hooks))
+        mode = "钩子干预已开启" if args.safe_hooks else "钩子零干预（仅运行态策略）"
+        print(f"[安全] norpagent.safe() 已开启（级别: {safe_level}，{mode}）")
         for key, val in kit.context.to_dict().items():
             print(f"       {key}={val}")
     plugin_dirs = list(getattr(args, "plugin_dir", None) or [])
@@ -287,7 +289,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                         choices=["auto", "inproc", "process"],
                         help="插件隔离模式（auto=按插件 ISOLATION 声明；process=强制进程级隔离）")
     parser.add_argument("--safe", default=None, choices=["basic", "standard", "high"],
-                        help="norpagent.safe() 安全级别（输入防护/提示词加固/审批/审计/签名）")
+                        help="norpagent.safe() 安全级别（运行态策略：审批/审计/签名，默认不挂钩子）")
+    parser.add_argument("--safe-hooks", action="store_true",
+                        help="配合 --safe：显式开启钩子干预（before_input 越狱拦截 + 提示词加固）")
     # 插件签名子命令
     sub = parser.add_subparsers(dest="subcmd")
     psign = sub.add_parser("plugin-sign", help="插件签名工具（NORP 插件签名协议 v1）")

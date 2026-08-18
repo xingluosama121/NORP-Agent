@@ -11,6 +11,12 @@ ArchLayer 是「搭积木」的积木盘：
 
 装配完成后 ``layer[slot]`` 直接取到实现对象，
 ``layer.describe()`` 打印完整装配清单（系统性工程的可观测性）。
+
+槽位表本身可热插拔（v0.9）：SLOT_SPECS 之外可通过
+norpagent.arch.slots.register_slot() 运行时注册自定义槽位，
+本层 connect / remount / describe / set_default 全部按**注册时的
+实时槽位表**工作——connect 幂等补齐晚注册的槽位，remount 对
+新注册槽位同样适用。
 """
 
 from __future__ import annotations
@@ -19,7 +25,12 @@ import inspect
 from typing import Any, Callable, Dict, Optional
 
 from norpagent.arch.address import AddressError, resolve_address
-from norpagent.arch.slots import SLOT_SPECS, SlotSpec
+from norpagent.arch.slots import (
+    SlotSpec,
+    all_slot_names,
+    get_slot,
+    snapshot_slots,
+)
 
 # remount() 的「未指定新值」哨兵：与显式传 None（清空槽位）区分。
 _RAISE = object()
@@ -90,18 +101,24 @@ class ArchLayer:
 
         装配器（runtime.mount）在连接前调用，把「库内置逻辑」
         登记为各槽位的默认实现；用户填了地址则优先地址。
+        自定义槽位同样可用本方法登记默认实现（值为 None 时生效）。
         """
-        if slot not in SLOT_SPECS:
-            raise KeyError(f"未知槽位 '{slot}'。可用槽位: {list(SLOT_SPECS)}")
+        if slot not in snapshot_slots():
+            raise KeyError(f"未知槽位 '{slot}'。可用槽位: {all_slot_names()}")
         self._defaults[slot] = factory
 
     # ── 连接 ──────────────────────────────────────────────
 
     def connect(self) -> "ArchLayer":
-        """解析并装配全部槽位（幂等：重复调用返回已装配结果）。"""
-        if self._connected:
-            return self
-        for slot in SLOT_SPECS:
+        """解析并装配全部槽位（幂等：重复调用只补齐新增槽位）。
+
+        槽位表可运行时扩展：connect 之后新注册的槽位，再次调用
+        connect() 只连接缺失的槽位（已装配的保持原样），无需
+        重建整个架构层；也可直接用 remount(slot, value) 单独连接。
+        """
+        for slot in snapshot_slots():
+            if self._connected and slot in self._impls:
+                continue  # 已装配：跳过（晚注册槽位才会继续连接）
             self._impls[slot] = self._connect_slot(slot)
         self._connected = True
         return self
@@ -117,9 +134,13 @@ class ArchLayer:
 
         已 connect 时立即重建该槽位实现并返回；未 connect 时仅更新
         配置（连接时统一解析，返回 None）。
+
+        槽位表热插拔（v0.9）：运行时新注册的自定义槽位同样可以
+        remount——按注册时的规格解析；replace=True 热替换规格后，
+        再次 remount 即按新规格重新解析。
         """
-        if slot not in SLOT_SPECS:
-            raise KeyError(f"未知槽位 '{slot}'。可用槽位: {list(SLOT_SPECS)}")
+        if slot not in snapshot_slots():
+            raise KeyError(f"未知槽位 '{slot}'。可用槽位: {all_slot_names()}")
         if value is _RAISE:
             value = self.config.get(slot)
         if isinstance(value, str):
@@ -167,7 +188,7 @@ class ArchLayer:
         sys.modules.pop(module_name, None)
 
     def _connect_slot(self, slot: str) -> Any:
-        spec: SlotSpec = SLOT_SPECS[slot]
+        spec: SlotSpec = get_slot(slot)
         value = self.config.get(slot)
         if value is None:
             default_factory = self._defaults.get(slot)
@@ -261,9 +282,13 @@ class ArchLayer:
         return dict(self._subconfigs.get(slot) or {})
 
     def describe(self) -> str:
-        """装配清单：每个槽位的来源（默认 / 地址）与实现。"""
+        """装配清单：每个槽位的来源（默认 / 地址）与实现。
+
+        按调用时的实时槽位表（快照）输出，运行时注册的自定义
+        槽位同样出现在清单中。
+        """
         lines = ["== NorpAgent 架构层装配清单 =="]
-        for slot, spec in SLOT_SPECS.items():
+        for slot, spec in snapshot_slots().items():
             value = self.config.get(slot)
             impl = self._impls.get(slot)
             if value is None:

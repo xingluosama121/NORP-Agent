@@ -85,6 +85,15 @@ class EventBus:
 
     - ``subscribe(listener, event_type=None)``：None 表示订阅全部事件
     - ``emit(type, **payload)``：发布事件；订阅者异常被捕获并记录，不中断主流程
+
+    高并发优化（写时复制，copy-on-write）：
+
+    - 订阅者表是**不可变快照**：subscribe / unsubscribe 在锁内创建
+      **新列表**并替换引用，绝不原地修改；
+    - emit / intercept 只在锁内取一次引用，随后**无锁直接迭代**——
+      高频事件（如流式 on_content 逐 token 推送）下省去每条事件的
+      列表复制开销；并发写者替换的是新列表对象，读者持有的旧
+      快照不会被修改，线程安全性不变。
     """
 
     def __init__(self) -> None:
@@ -97,38 +106,53 @@ class EventBus:
         """设置订阅者异常时的记录回调（默认打印到 stderr）。"""
         self._log_error = logger
 
+    @staticmethod
+    def _without_one(lst: List[Listener], listener: Listener) -> List[Listener]:
+        """返回移除首个等于 listener 元素的新列表（写时复制语义）。"""
+        for i, fn in enumerate(lst):
+            if fn == listener:
+                return lst[:i] + lst[i + 1:]
+        return lst
+
     def subscribe(self, listener: Listener, event_type: Optional[str] = None) -> None:
         with self._lock:
             if event_type is None:
-                self._all.append(listener)
+                self._all = self._all + [listener]
             else:
-                self._typed.setdefault(event_type, []).append(listener)
+                self._typed[event_type] = self._typed.get(event_type, []) + [listener]
 
     def unsubscribe(self, listener: Listener, event_type: Optional[str] = None) -> None:
         with self._lock:
             if event_type is None:
-                if listener in self._all:
-                    self._all.remove(listener)
+                self._all = self._without_one(self._all, listener)
             else:
                 lst = self._typed.get(event_type)
-                if lst and listener in lst:
-                    lst.remove(listener)
+                if lst:
+                    new = self._without_one(lst, listener)
+                    if new:
+                        self._typed[event_type] = new
+                    else:
+                        del self._typed[event_type]
+
+    def _snapshot(self, event_type: str) -> "tuple[List[Listener], Optional[List[Listener]]]":
+        """锁内取订阅者引用快照（不复制，见类文档的写时复制说明）。"""
+        with self._lock:
+            return self._all, self._typed.get(event_type)
 
     def emit(self, event_type: str, **payload: Any) -> None:
         event = AgentEvent(type=event_type, payload=payload)
-        with self._lock:
-            listeners = list(self._all) + list(self._typed.get(event_type, ()))
-        for fn in listeners:
+        all_listeners, typed_listeners = self._snapshot(event_type)
+        for fn in all_listeners:
             try:
                 fn(event)
             except Exception as exc:  # noqa: BLE001 — 订阅者不得拖垮主循环
-                msg = f"[EventBus] 事件 {event_type} 订阅者异常: {exc}"
-                if self._log_error:
-                    self._log_error(msg)
-                else:
-                    import sys
-
-                    print(msg, file=sys.stderr)
+                self._report_error(event_type, exc)
+        if typed_listeners:
+            for fn in typed_listeners:
+                try:
+                    fn(event)
+                except Exception as exc:  # noqa: BLE001 — 订阅者不得拖垮主循环
+                    self._report_error(event_type, exc)
 
     def intercept(self, event_type: str, **payload: Any) -> Any:
         """可变事件分发：返回第一个非 None 的订阅者返回值。
@@ -142,9 +166,8 @@ class EventBus:
         其余订阅者异常记录后继续（订阅者不得拖垮主循环）。
         """
         event = AgentEvent(type=event_type, payload=payload)
-        with self._lock:
-            listeners = list(self._all) + list(self._typed.get(event_type, ()))
-        for fn in listeners:
+        all_listeners, typed_listeners = self._snapshot(event_type)
+        for fn in all_listeners:
             try:
                 result = fn(event)
                 if result is not None:
@@ -152,11 +175,24 @@ class EventBus:
             except HookVeto:
                 raise
             except Exception as exc:  # noqa: BLE001 — 订阅者不得拖垮主循环
-                msg = f"[EventBus] 拦截事件 {event_type} 订阅者异常: {exc}"
-                if self._log_error:
-                    self._log_error(msg)
-                else:
-                    import sys
-
-                    print(msg, file=sys.stderr)
+                self._report_error(event_type, exc)
+        if typed_listeners:
+            for fn in typed_listeners:
+                try:
+                    result = fn(event)
+                    if result is not None:
+                        return result
+                except HookVeto:
+                    raise
+                except Exception as exc:  # noqa: BLE001 — 订阅者不得拖垮主循环
+                    self._report_error(event_type, exc)
         return None
+
+    def _report_error(self, event_type: str, exc: Exception) -> None:
+        msg = f"[EventBus] 事件 {event_type} 订阅者异常: {exc}"
+        if self._log_error:
+            self._log_error(msg)
+        else:
+            import sys
+
+            print(msg, file=sys.stderr)

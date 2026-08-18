@@ -1,5 +1,5 @@
-﻿# Copyright (c) 2026 xingluosama121, MIT Licensed
-"""预设模式包：内置四种模式，全部通过注册表登记。
+# Copyright (c) 2026 xingluosama121, MIT Licensed
+"""预设模式包：内置六种模式，全部通过注册表登记。
 
 新增高频使用模式的方式：
     1. 在本包添加 build_xxx_preset() 并在 register_all_presets 登记；
@@ -15,6 +15,8 @@ from norpagent.modes.minimal import build_minimal_preset
 from norpagent.modes.standard import build_standard_preset
 from norpagent.modes.ptc import build_ptc_preset
 from norpagent.modes.creative import build_creative_preset
+from norpagent.modes.longrun import build_longrun_preset
+from norpagent.modes.embedded import build_embedded_preset
 
 
 def register_all_presets(registry: Any) -> Any:
@@ -23,6 +25,8 @@ def register_all_presets(registry: Any) -> Any:
     registry.register_preset(build_standard_preset())
     registry.register_preset(build_ptc_preset())
     registry.register_preset(build_creative_preset())
+    registry.register_preset(build_longrun_preset())
+    registry.register_preset(build_embedded_preset())
     return registry
 
 
@@ -32,4 +36,6 @@ __all__ = [
     "build_standard_preset",
     "build_ptc_preset",
     "build_creative_preset",
+    "build_longrun_preset",
+    "build_embedded_preset",
 ]

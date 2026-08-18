@@ -1,6 +1,6 @@
 # NORP Agent 开发手册
 
-> **版本**：0.7.0 ｜ **许可**：Copyright (c) 2026 xingluosama121, MIT Licensed
+> **版本**：0.9.0 ｜ **许可**：Copyright (c) 2026 xingluosama121, MIT Licensed
 
 ---
 
@@ -19,10 +19,11 @@
 - [第 11 章　插件系统](#第-11-章插件系统)
 - [第 12 章　预设模式](#第-12-章预设模式)
 - [第 13 章　命令行入口](#第-13-章命令行入口)
-- [第 14 章　库集成示例](#第-14-章库集成示例)
-- [第 15 章　测试与调试](#第-15-章测试与调试)
-- [第 16 章　迁移指南](#第-16-章迁移指南)
-- [第 17 章　常见问题（FAQ）](#第-17-章常见问题faq)
+- [第 14 章　嵌入式与超高并发部署](#第-14-章嵌入式与超高并发部署)
+- [第 15 章　库集成示例](#第-15-章库集成示例)
+- [第 16 章　测试与调试](#第-16-章测试与调试)
+- [第 17 章　迁移指南](#第-17-章迁移指南)
+- [第 18 章　常见问题（FAQ）](#第-18-章常见问题faq)
 - [附录 A　架构槽位速查表](#附录-a架构槽位速查表)
 - [附录 B　9 层钩子速查表](#附录-b9-层钩子速查表)
 - [附录 C　公开 API 索引](#附录-c公开-api-索引)
@@ -207,12 +208,14 @@ Agent 循环）时，为槽位填入新地址即可，无需修改框架核心�
 | 文件 | 职责 |
 |---|---|
 | `norpagent/__init__.py` | 模块即入口：`np()` / `np.stop()` / `np.nasyncio()` |
-| `norpagent/arch/slots.py` | 18 个架构槽位的规格定义表 |
+| `norpagent/arch/slots.py` | 18 个内置架构槽位的规格定义表 + 槽位表热插拔注册中心（register_slot / unregister_slot / replace=True 规格热替换） |
 | `norpagent/arch/address.py` | 地址函数解析器（字符串 → 模块/对象） |
 | `norpagent/arch/layer.py` | ArchLayer：槽位连接与工厂调用 |
 | `norpagent/loops/base.py` | LoopRuntime 协议（事件循环契约） |
-| `norpagent/loops/std_asyncio.py` | 默认循环实现（标准 asyncio 适配器） |
+| `norpagent/loops/nasyncio.py` | 默认循环实现：NasyncioLoopRuntime（自研 nasyncio 核心适配器，零 asyncio 依赖） |
+| `norpagent/loops/std_asyncio.py` | 0.7 旧模块名的兼容垫片（重导出 StdLoopRuntime，不 import asyncio） |
 | `norpagent/loops/__init__.py` | `norpagent.nasyncio()` 架构函数 |
+| `norpagent/nasyncio.py` | 自研异步 IO 核心（原 nasync_io，已打包进库）：事件循环 / Future / Task / 同步原语 / 子进程，不依赖标准 asyncio |
 | `norpagent/frontends/base.py` | Frontend 协议（前端契约） |
 | `norpagent/frontends/web.py` | 默认前端：Web（HTTP + SSE，页面 = front.html） |
 | `norpagent/frontends/console.py` | 控制台前端：命令行 REPL（显式指定） |
@@ -252,7 +255,10 @@ print(all_slot_names())
 #  'plugins', 'frontend', 'ui', 'preset', 'logger', 'storage', 'error_handler']
 ```
 
-共 **18 个槽位**。每个槽位都有规格说明（SlotSpec）：名称、职责、协议、
+共 **18 个内置槽位**（框架结构契约，受保护不可注销 / 覆盖规格）。
+槽位表本身可热插拔：第三方可运行时 `register_slot()` 注册**自定义
+槽位**（名字 / 语义 / 装配逻辑完全自定义），注册即接入完整管线——
+详见 3.8 节。每个槽位都有规格说明（SlotSpec）：名称、职责、协议、
 默认实现、字符串语义、工厂参数约定：
 
 ```python
@@ -261,11 +267,11 @@ from norpagent.arch.slots import get_slot
 print(get_slot("async_loop").format_help())
 # [async_loop] 事件循环系统：Agent 运行所在的异步调度核心。等价于架构函数 norpagent.nasyncio()。
 #   协议: LoopRuntime 协议（norpagent.loops.base.LoopRuntime）：...
-#   默认: norpagent.loops.std_asyncio:StdLoopRuntime
+#   默认: norpagent.loops.nasyncio:NasyncioLoopRuntime
 #   字符串语义: address
 #   工厂参数 layer: 所在架构层
 #   工厂参数 config: 该槽位的附加配置 dict
-#   示例: np(async_loop='norpagent.loops.std_asyncio:StdLoopRuntime')
+#   示例: np(async_loop='norpagent.loops.nasyncio:NasyncioLoopRuntime')
 ```
 
 ### 3.2 地址函数：不填 = 默认，填了 = 接入
@@ -359,7 +365,7 @@ print(eng.layer.describe())
 
 ```
 == NorpAgent 架构层装配清单 ==
-  async_loop       <- 默认逻辑                         => StdLoopRuntime
+  async_loop       <- 默认逻辑                         => NasyncioLoopRuntime
   agent_runtime    <- 默认逻辑                         => type
   model            <- 默认逻辑                         => (未连接)
   ...
@@ -424,6 +430,37 @@ np.remount(model="myapp.model:create")      # 运行中替换模块文件（热�
 | 基础设施槽位 | frontend / async_loop | 停旧实现、启新实现；新实现启动失败自动回滚旧实现。async_loop 替换时旧循环上在途任务会被放弃，建议无任务时替换 |
 | 基础服务槽位 | logger / storage / error_handler | 直接更新引擎引用，立即生效 |
 
+#### 3.7.1 热挂载前端页面（html 参数）
+
+`frontend` 是基础设施槽位，替换语义为「停旧启新」。配合 WebFrontend
+的 `html` 挂载参数，可在运行中换掉 `/` 路由页面——不用重启进程，
+刷新浏览器即见新页面：
+
+```python
+import norpagent as np
+
+np(html="front.html")                       # 启动并挂载自定义页面
+# ... 修改 front.html 或换别的页面文件 ...
+np.remount(frontend="norpagent.frontends.web:WebFrontend;html=front.html")
+# 端口不变，浏览器刷新（或重开 http://127.0.0.1:8787/）即为新页面
+```
+
+参数优先级：remount **显式给出**的键覆盖启动参数，**未显式给出**的键
+（如 port）沿用启动参数——所以只换页面时浏览器 URL 不变。显式键的
+判定：字符串地址取分句 `;key=value` 中的键；实例取构造参数中与默认值
+不同的键（html 以 `_html` 属性判定）。例如：
+
+```python
+np.remount(frontend="norpagent.frontends.web:WebFrontend;port=9000")  # 换端口
+np.remount(frontend="norpagent.frontends.web:WebFrontend;html=")      # 重置为库内置页
+from norpagent.frontends.web import WebFrontend
+np.remount(frontend=WebFrontend(html="front.html"))                   # 实例形式
+```
+
+注意事项：`np.remount()` 是**进程内 API**，需在启动了引擎的同一
+Python 进程里调用（跨进程不生效）。cmd 中运行时，把 remount 放在
+生命周期循环里、或起一个线程读 stdin 即可实现「敲命令换页面」。
+
 注意事项：
 
 1. 只允许在引擎 RUNNING 状态调用，否则抛 `EngineError`；槽位名非法同样抛错；
@@ -433,6 +470,94 @@ np.remount(model="myapp.model:create")      # 运行中替换模块文件（热�
 4. `agent_runtime` 是 `defer_factory` 槽位：工厂推迟到引擎装配期调用
    （registry / preset 上下文就绪后），地址子句 `;key=value` 经
    `ArchLayer.subconfig()` 注入工厂的 config。
+
+### 3.8 槽位表热插拔：注册自定义槽位
+
+`np.remount()` 换的是**槽位的实现**；槽位表本身（`SLOT_SPECS`）也
+可热插拔——第三方库运行时注册**全新的自定义槽位**，注册即接入
+完整管线（`np()` 参数校验、ArchLayer 装配、`np.remount()` 热替换、
+`layer.describe()` 清单），无需修改框架源码、无需重启进程：
+
+```python
+from norpagent.arch import SlotSpec, register_slot, unregister_slot
+
+# 自定义槽位 = 名字 + 字符串语义 + 应用逻辑（applier）
+register_slot(SlotSpec(
+    name="audit_tag",                # 槽位名 = np() 的关键字参数名
+    description="审计标签",
+    protocol="literal 字符串",
+    string_semantics="literal",      # address / name / name_or_address / literal
+    applier=_apply_audit_tag,        # 槽位值非空时由装配器调用
+))
+```
+
+```python
+import norpagent as np
+
+np(audit_tag="release-1")            # 装配期即应用
+np.remount(audit_tag="release-2")    # 运行中热替换（applier 重新执行）
+```
+
+`applier(reg, layer, value, params, ctx)` 的契约：
+
+- `value` 是解析后的槽位值：`address` 语义为已实例化实现（子配置
+  `;key=value` 经 `layer.subconfig(slot)` 取得），`name` /
+  `name_or_address` / `literal` 语义为原值；
+- `ctx` 提供四个可变容器：`components`（最终预设组件声明
+  {kind: name}）、`extras`（引擎附加对象，`engine.extras[槽位名]`
+  消费）、`overrides`（预设字段覆盖）、`meta`（注册表架构元数据，
+  记录挂上去的可退订对象）；
+- **同一注册表可能重复调用**（装配 + 每次 `np.remount`），applier
+  必须重入安全：重复执行不叠加副作用——订阅事件总线的对象先按
+  `ctx["meta"]` 的记录退订再重挂（参考内置 hooks / security /
+  plugins 槽位的做法）；
+- `remount_rebuild_agent=True`：热替换后**热重建 AgentRuntime**
+  （applier 向预设 `components` 登记通用组件的「装配型」槽位应置
+  True）；默认 False：下一次 run() 生效或仅更新 extras。
+
+完整示例——注册一个通用组件型自定义槽位（与内置 context_store
+同一条装配通道）：
+
+```python
+from norpagent.arch import SlotSpec, register_slot
+
+
+def apply_vector_store(reg, layer, value, params, ctx):
+    name = "_arch_vector"
+    factory = value if callable(value) else (lambda v=value: v)
+    reg.register_component("vector_store", name, factory)
+    ctx["components"]["vector_store"] = name   # 预设声明组件
+    ctx["extras"]["vector_store"] = value
+
+
+register_slot(SlotSpec(
+    name="vector_store",
+    description="向量检索组件（自定义装配槽位）",
+    protocol="任意实现（注册为 vector_store 通用组件）",
+    string_semantics="literal",
+    applier=apply_vector_store,
+    remount_rebuild_agent=True,     # 热替换后热重建，组件立即生效
+))
+
+np(vector_store=MyVectorStore())    # 装配：engine.agent.components["vector_store"]
+np.remount(vector_store=Other())    # 热替换：AgentRuntime 热重建
+```
+
+保护与校验规则：
+
+| 规则 | 说明 |
+|---|---|
+| 内置 18 槽位受保护 | 不可注册 / 覆盖规格 / 注销（框架结构契约：引擎、前端、文档引用）。它们的**值**随时可 `np.remount` 热替换 |
+| 槽位名合法性 | 合法 Python 标识符（`np()` 关键字参数），不能是关键字，不能是 `prompt` / `config`（launch 特殊键） |
+| 重复名 | 抛 `SlotError`；`register_slot(spec, replace=True)` 热替换同名自定义槽位的规格（默认地址 / 语义 / applier / 重建标志） |
+| 非法规格 | 非 callable applier、非法 `string_semantics` 抛 `SlotError`；失败的 replace 不破坏旧规格 |
+| 注销 | `unregister_slot(name)` 注销自定义槽位并返回规格；此后 `np.remount(该槽位)` 报未知槽位，`np(该键=...)` 回落为任务参数；已装配实现保持原状 |
+| 晚注册 | 引擎启动后注册的槽位：`layer.connect()` 幂等补齐（只连接缺失槽位），或直接 `np.remount(槽位=值)` 走全管线 |
+
+顶层 API：`np.register_slot` / `np.unregister_slot` /
+`np.SlotSpec` / `np.SLOT_SPECS` / `np.is_builtin_slot` /
+`np.snapshot_slots`；槽位表操作线程安全（RLock 保护，装配 / 热挂载
+按快照迭代）。
 
 ---
 
@@ -446,7 +571,7 @@ NorpAgent 将循环系统提供为独立架构函数：
 ```python
 import norpagent as np
 
-loop = np.nasyncio()                       # 默认循环
+loop = np.nasyncio()                       # 默认循环（自研 nasyncio 核心）
 loop = np.nasyncio("myapp.loop:create")    # 自定义循环
 ```
 
@@ -457,8 +582,17 @@ np(async_loop="myapp.loop:create")   # 等价于 np.nasyncio("myapp.loop:create"
 ```
 
 `np.nasyncio()` 的返回值是一个 **LoopRuntime**（协议见下）。
-如需使用其他事件循环实现（例如不依赖标准 asyncio 的循环），实现
-LoopRuntime 协议并为 `async_loop` 槽位填入地址即可，无需修改框架核心代码。
+默认实现运行的调度核心是库内置的**自研 nasyncio 事件循环**
+（`norpagent.nasyncio`，原 nasync_io，已打包进库）——**不依赖、
+不 import 标准 asyncio**（声明与原因见 4.7）。如需使用其他事件
+循环实现，实现 LoopRuntime 协议并为 `async_loop` 槽位填入地址
+即可，无需修改框架核心代码。
+
+> 顶层 `norpagent.nasyncio`（即 `np.nasyncio`）绑定的是自研核心
+> **模块**（可调用）：`np.nasyncio()` 返回 LoopRuntime 默认实现；
+> `np.nasyncio.EventLoop` / `Future` / `Task` 直接访问核心类型；
+> `import norpagent.nasyncio` 得到同一个核心模块。架构函数本体在
+> `norpagent.loops.nasyncio`。
 
 ### 4.2 LoopRuntime 协议
 
@@ -476,13 +610,24 @@ class LoopRuntime(Protocol):
 引擎（`norpagent.runtime.engine.NorpEngine`）只通过这个协议与循环交互，
 不 import 任何具体循环实现。
 
-### 4.3 默认实现：StdLoopRuntime
+### 4.3 默认实现：NasyncioLoopRuntime（自研 nasyncio 核心）
 
-默认实现基于标准 asyncio：独立线程跑事件循环，`submit()` 把同步函数
-交给**自有守护工作池**执行并等待结果（不用 asyncio 默认线程池，
-原因见 4.6）。配置项：`max_workers`（工作池线程数，默认
-`max(4, cpu_count)`），经 `np(config={"async_loop": {"max_workers": 8}})`
-或 `np.nasyncio(max_workers=8)` 调整。
+默认实现基于库内置的**自研 nasyncio 事件循环**（不依赖标准
+asyncio）：独立线程跑 `norpagent.nasyncio.EventLoop`（run_forever），
+`submit()` 把同步函数交给**自有守护工作池**执行并等待结果（不用
+标准线程池的原因见 4.6 与 4.7）。
+
+配置项（嵌入式 / 高并发调参，详见第 14 章）：
+
+| 配置 | 说明 | 默认 |
+|---|---|---|
+| `max_workers` | 守护工作池线程数 | `max(4, cpu_count)` |
+| `poll_interval` | submit/run_async 完成轮询间隔（秒） | `0.05` |
+
+经 `np(config={"loop": {"max_workers": 8}})` 传入（或环境变量
+`NORPAGENT_MAX_WORKERS` / `NORPAGENT_SUBMIT_POLL`；等价写法
+`np.nasyncio(max_workers=8)` 与 `np(async_loop="norpagent.loops.nasyncio:NasyncioLoopRuntime")`
+构造时同源）。
 
 ```python
 loop = np.nasyncio()
@@ -491,6 +636,10 @@ result = loop.submit(lambda: 1 + 1)   # → 2
 loop.stop()
 loop.join()
 ```
+
+`run_async(coro)` 可选能力把协程经自研核心的
+`run_coroutine_threadsafe` 提交到循环线程执行并阻塞返回结果
+（引擎默认走 submit()，供自定义协程入口使用）。
 
 ### 4.4 自定义循环示例
 
@@ -534,29 +683,32 @@ while True:
         break
 ```
 
-### 4.5 跨线程桥接注意事项
+### 4.5 跨线程桥接注意事项（自研核心已内置修复）
 
-**事项一**：`asyncio.Future.result()` 不是线程安全的阻塞等待。
-从非循环线程调用它不会阻塞，future 未完成时直接抛
-`InvalidStateError: Result is not set.`。正确做法是让**执行线程**
-（而非循环线程）负责「写完结果再置位事件」，不依赖
-asyncio future 的 done-callback 调度时序（`StdLoopRuntime.submit`
-即按此实现）。
+**事项一（自研核心已修复）**：标准 asyncio 的 `Future.result()` 不是
+线程安全的阻塞等待，跨线程 `add_done_callback()` 在 future 已完成时
+走 `loop.call_soon`（只塞 `_ready` 队列不写自管道），循环阻塞在
+selector 上就收不到唤醒、等待方挂起。库内置的自研核心
+（`norpagent.nasyncio.Future`）把这两个坑都修掉了：完成通知在任意
+线程发生都会走 `call_soon_threadsafe`（写自管道立即唤醒循环）。
+默认运行时的 `submit()` 仍采用「执行线程写结果 +
+threading.Event 置位」模式——submit 任务可能长时间阻塞，放在守护
+工作池里与循环彻底解耦更稳（与是否 asyncio 无关）。
 
-**事项二**：跨线程调用 `Future.add_done_callback()`，如果 future
-**已经完成**，回调会走 `loop.call_soon`（非线程安全版本）——
-它只把句柄塞进 `_ready` 队列而不写自管道，此时循环若阻塞在
-selector/proactor 上就收不到唤醒，`done.wait()` 挂起。
-（`StdLoopRuntime.run_async` 的跨线程等待改用
-concurrent.futures.Future 的 done 回调 + 轮询 Event 置位：回调由
-Future 保证在结果写入线程内同步触发，无唤醒竞态。）
+**事项二（run_async 的跨线程等待）**：`NasyncioLoopRuntime.run_async`
+经自研核心的 `run_coroutine_threadsafe` 把协程提交到循环线程
+（内部 call_soon_threadsafe + 自管道唤醒，无唤醒竞态），等待用
+concurrent.futures.Future 的 done 回调 + 轮询 Event 置位（回调由
+concurrent.futures 保证在结果写入线程内同步触发）。注意
+`run_async` 不能在循环线程内调用（阻塞等待会卡死循环），此时
+请直接 `await` 协程或改用 `submit()`。
 
 规则：跨线程协调使用「执行线程写结果 + threading.Event 置位」，
 循环线程不作为唤醒路径上的必要环节。
 
 ### 4.6 Ctrl+C 与任务取消语义
 
-#### 4.6.1 问题：主线程不在 asyncio.run() 里，Ctrl+C 为什么可能失灵
+#### 4.6.1 问题：主线程不在事件循环入口里，Ctrl+C 为什么可能失灵
 
 `np()` 启动后主线程只做生命周期轮询（`np.stop()`），真正的工作线程
 在后台执行任务，调用方（如控制台 REPL 的主线程）阻塞在
@@ -566,19 +718,21 @@ Future 保证在结果写入线程内同步触发，无唤醒竞态。）
    pending interrupt 的形式投递到主线程，只在**字节码边界**被检查；
    主线程阻塞在 `Event.wait()`（底层 `WaitForSingleObject` 无限等待）
    时永远不会回到字节码边界，Ctrl+C 形同虚设。
-   **解法**：`StdLoopRuntime.submit()` 改为**轮询等待**（每 ≤0.2s
-   经过一次字节码边界），Ctrl+C 即刻以 `KeyboardInterrupt` 冒出。
+   **解法**：`NasyncioLoopRuntime.submit()` 改为**轮询等待**（每
+   ≤`poll_interval` 秒经过一次字节码边界，默认 0.05s——0.9 起由
+   0.2s 收紧，任务完成感知延迟更低；嵌入式可调大），Ctrl+C 即刻
+   以 `KeyboardInterrupt` 冒出。
 2. **卡在阻塞 I/O 里的工作线程杀不死，进程僵住**：SIGINT 只到主线程，
    工作线程若卡在沙箱 `subprocess` / HTTP 请求里，只能等它自己超时；
-   更糟的是 asyncio 默认 ThreadPoolExecutor 的工作线程被 CPython 登记
-   在 `threading._threads_queues`，解释器退出时会被**强制 join**——
-   任务不结束进程就退不出去。
+   更糟的是标准线程池（ThreadPoolExecutor，asyncio 的默认执行器
+   也是如此）的工作线程被 CPython 登记在 `threading._threads_queues`，
+   解释器退出时会被**强制 join**——任务不结束进程就退不出去。
    **解法**：工作池用裸守护线程（退出不 join）；同时把「取消」信号
    显式传给任务执行体（见 4.6.2），让它尽早自行退出。
 
 #### 4.6.2 取消信号：contextvars + 取消事件
 
-`StdLoopRuntime.submit()` 给每个任务包进一个带取消事件的
+`NasyncioLoopRuntime.submit()` 给每个任务包进一个带取消事件的
 contextvars 上下文（`norpagent.loops.cancel`），执行体内随时可查：
 
 ```python
@@ -614,18 +768,17 @@ def my_tool(args, ctx):
 （SDK 连接超时 / call_timeout / ptc_timeout），进程退出则由
 守护线程保证不被阻塞。
 
-#### 4.6.3 为什么不「全部用 nasyncio」——线程边界说明
+#### 4.6.3 线程边界说明：什么进循环、什么不进
 
-`norpagent.nasyncio()` 是 **async_loop 槽位的架构函数**（默认实现
-StdLoopRuntime = 标准 asyncio 适配器），不是一套自研事件循环。
-全库所有任务调度（engine.submit → loop.submit）都经它走协议，
-库内只有 `loops/std_asyncio.py` 一个文件 import asyncio。剩下的
-裸线程是**刻意的阻塞 I/O 泵**，不应进事件循环：
+`norpagent.nasyncio()` 是 **async_loop 槽位的架构函数**；其默认实现
+（NasyncioLoopRuntime）运行库内置的自研 nasyncio 事件循环。全库所有
+任务调度（engine.submit → loop.submit）都经它走协议。剩下的裸线程
+是**刻意的阻塞 I/O 泵**，不应进事件循环：
 
 | 线程 | 职责 | 为什么不用循环线程 |
 |---|---|---|
 | `norpagent-loop-pool-*` | 执行 submit 的同步任务 | 任务本体可能阻塞（沙箱/HTTP），放循环线程会卡死整个循环 |
-| `norpagent-std-loop` | 跑 asyncio 事件循环 | 循环本体 |
+| `norpagent-nasync-loop` | 跑自研 nasyncio 事件循环 | 循环本体 |
 | 沙箱管道 reader（PTC/pooled/插件宿主） | 读取子进程 stdout/stderr | 阻塞管道读取，不可中断 |
 | `norpagent-webui` / 请求线程 | HTTP 服务与请求 | socketserver 自身的线程模型 |
 | `norpagent-model-*` | call_timeout 硬中断看守 | 限时 join，超时即弃 |
@@ -633,6 +786,62 @@ StdLoopRuntime = 标准 asyncio 适配器），不是一套自研事件循环。
 规则：**计算与调度进循环（可替换），阻塞 I/O 用守护线程泵
 （不可取消但也不阻塞退出）**。替换 `async_loop` 槽位即可整体换掉
 循环系统（协议见 4.2），无需改动框架其他部分。
+
+### 4.7 明确声明：norpagent 不依赖标准 asyncio，调度核心拥抱自研 nasyncio
+
+**声明**：0.8 起 norpagent 库内**零 `import asyncio`**。默认事件
+循环核心是打包进库的自研异步 IO 库 `norpagent.nasyncio`（原
+nasync_io，v2.0.0），底层只依赖 Python 标准库的**非 asyncio**
+模块：`threading` / `queue` / `heapq` / `selectors` / `socket` /
+`concurrent.futures` / `subprocess` / `os` / `time`。全库可用
+`grep -R "import asyncio" norpagent/` 验证为空。
+
+**为什么要拥抱自研 nasyncio、摆脱标准 asyncio**：
+
+1. **调度、取消、跨线程唤醒语义完全由库内代码定义（掌控力）**。
+   标准 asyncio 存在公认的语义坑，例如：
+   - `Task.cancel()` 非线程安全（直接操作循环线程的 ready 队列）；
+   - 跨线程对已完成 Future `add_done_callback()` 走 `call_soon`，
+     不写自管道，循环阻塞在 selector 上收不到唤醒，等待方挂起；
+   - 没有对外的「取消主任务」入口，外部线程无法强制中断正在
+     await 的协程（停止延迟取决于当前操作，可达数分钟）。
+   自研核心逐项修复：`Task.cancel()` 跨线程安全；Future 完成通知
+   自动走 `call_soon_threadsafe` 写自管道；`EventLoop.abort_main()`
+   提供线程安全的即时停止。
+2. **依赖面压缩到可审计**。事件循环的全部行为（trampoline 调度、
+   定时器堆、socketpair 自管道唤醒、取消穿透）都是库内自己写的
+   代码，审计面 = 自研核心一个文件；不引入标准 asyncio 的
+   内部实现细节与版本差异（各 Python 版本 selector 行为不一）。
+3. **退出语义可控**。不用标准线程池执行 submit：ThreadPoolExecutor
+   （含 asyncio 默认执行器）的工作线程被 CPython 登记在
+   `threading._threads_queues`，解释器退出时被强制 join——任务卡在
+   沙箱 subprocess / HTTP 里进程就僵住。默认运行时用裸守护线程池
+   + 自管道唤醒，Ctrl+C 后进程即刻收尾（4.6.1）。
+4. **API 语义对齐、迁移零成本**。自研核心提供与 asyncio 用法一一
+   对应的同名 API（`EventLoop` / `Future` / `Task` / `Event` /
+   `Lock` / `Condition` / `sleep` / `wait_for` / 子进程封装 /
+   `run_coroutine_threadsafe`），熟悉 asyncio 的代码把
+   `import asyncio` 换成 `import norpagent.nasyncio` 即可移植，
+   且 `CancelledError` / `TimeoutError` 语义保持一致。
+5. **自研核心独立可用**。`norpagent.nasyncio` 本身是一个可独立
+   使用的微型异步库（原 nasync_io 打包进库），可以脱离
+   norpagent 框架单独 import、单独跑循环；框架只是通过
+   LoopRuntime 协议把它接进 `async_loop` 槽位。
+
+**兼容性**：0.7 旧地址 `norpagent.loops.std_asyncio:StdLoopRuntime`
+保留为兼容垫片（重导出同一实现，不 import asyncio），历史代码
+不失效；新代码使用 `norpagent.loops.nasyncio:NasyncioLoopRuntime`
+（见 4.3）。
+
+```python
+import norpagent as np
+import norpagent.nasyncio as core  # 自研核心模块（可调用）
+
+print(core.__version__)          # 2.0.0
+loop_rt = np.nasyncio()          # LoopRuntime 默认实现（同 core()）
+print(loop_rt.name)              # nasyncio
+print(core.EventLoop)            # 自研事件循环类
+```
 
 ---
 
@@ -674,13 +883,14 @@ Web UI 的行为与配置项：
 
 | 能力 | 说明 |
 |---|---|
-| 配置持久化 | 设置面板保存后落盘 `~/.norpagent/webui_config.json`（`NORPAGENT_WEBUI_CONFIG` 可覆盖；`WebUI(config_path=...)` 可指定，传 `None` 关闭）。启动时自动加载——API Key / 模型 / 语言等跨进程保留。磁盘加载只接受 `DEFAULT_CONFIG` 白名单键，未知键丢弃 |
-| 页面防缓存 | 页面响应带 `Cache-Control: no-store`，浏览器每次刷新获取最新 front.html |
+| 配置持久化 | 设置面板保存后落盘 `~/.norpagent/webui_config.json`（`NORPAGENT_WEBUI_CONFIG` 可覆盖；`WebUI(config_path=...)` 可指定，传 `None` 关闭）。磁盘加载只接受 `DEFAULT_CONFIG` 白名单键，未知键丢弃。0.9 起**磁盘加载延迟到 `start()`**：构造 WebUI 不再触发任何磁盘 I/O（嵌入式 / 只读根文件系统友好），显式构造参数 > 磁盘值 > 默认值的优先级不变 |
+| 页面防缓存 | 页面响应带 `Cache-Control: no-store`，浏览器每次刷新获取最新 front.html；服务端页面字节读入内存缓存（0.9：每次 GET / 不再读盘） |
 | 页面挂载（html 参数） | `/` 路由默认页面可整体替换：`html` 接收**文件路径**或 **HTML 内容**（strip 后以 `<` 开头视为内容，否则视为文件路径）；文件不存在时构造抛 `ValueError`（快速失败，不静默回落）。无需物理覆盖 `norpagent/builtin/ui/assets/front.html`。`/flow` 页面不受影响 |
-| 断连处理 | 客户端断连（WinError 10053 / EPIPE 等）静默处理，内部错误记录 DEBUG 日志 |
+| 断连处理 | 客户端断连（WinError 10053 / EPIPE 等）静默处理，内部错误记录 DEBUG 日志；SSE 连接断开 ≤1s 内被非阻塞探测回收（0.9，防线程堆积） |
+| SSE 背压（0.9） | 每连接有界事件缓冲 + 帧批量写出，慢客户端自动降级，超高并发下内存有上界——详见第 14.3 节 |
 | 端口顺延 | 绑定失败（含 Windows 10013 监听占用）时向后顺延最多 10 个端口，以实际端口为准 |
 | 请求体防护 | 负数 Content-Length 按无请求体处理；超过 1MB 拒收 |
-| 关闭幂等 | `shutdown()` 幂等 + 同线程死锁防护，可跨线程调用 |
+| 关闭幂等 | `shutdown()` 幂等 + 同线程死锁防护，可跨线程调用；`block_on_close=False` 停机不等连接关闭（0.9） |
 | 事件路由 | 事件 sid 解析优先 `submit()` 登记的原始浏览器会话 id；会话管理器支持指定 id 创建（`create_session(title=..., session_id=...)`），内核续接会话时 id 与浏览器标签页一致 |
 
 ```python
@@ -714,6 +924,32 @@ np(html="/path/to/my.html")
 # 文件路径不存在时构造报错（快速失败，不静默回落默认页面）
 # ValueError: WebUI html 挂载参数既不是 HTML 内容（以 '<' 开头）也不是存在的文件: ...
 ```
+
+**仓库根目录 `front.html`（多宿主前端）**：pywebview 桌面协议的前端
+已改造为多宿主传输桥架构——浏览器宿主下自动构造
+`window.pywebview.api`（fetch + SSE 实现全部方法，并把库事件翻译为
+文本事件协议 T:/R:/C:/U:/E:/Q:），桌面宿主原样兼容。可直接挂载：
+
+```python
+np(html="front.html")   # 相对工作目录，库按文件路径读取
+```
+
+挂载后聊天 / 会话 / 设置 / 插件面板 / 文件浏览全部走库的 REST API
+（契约见 `norpagent/builtin/ui/web.py` 的 do_GET / do_POST）；SSH 远程
+与移动端远程控制在库版已剥离，对应 UI 入口自动隐藏、桥方法占位降级。
+
+输入框选择器（第一直觉设计）：
+
+- **模式**：`/api/presets` 列出注册表全部预设（minimal / standard /
+  ptc / creative / longrun / embedded），选择后经 config `preset_name` 热切换
+  （`engine.remount(preset=...)`，AgentRuntime 热重建；任务运行中禁用，
+  `*_arch` 衍生预设不对外展示）；
+- **模型**：从 `api_base` 拉取远端模型列表（`/api/models`），选择即
+  保存 `model` 并立即生效，附「从 URL 拉取 / 模型设置」入口；
+- **推理强度**：点击循环切换 关 / 低 / 中 / 高，即时保存。
+
+调试面板（设置 → Agent 调试）条目化展示版本 / 前端 / 预设 / 模型 /
+工具 / 插件 / 会话等字段，原始 JSON 折叠在「原始数据」区。
 
 ### 5.5 自定义前端示例
 
@@ -873,7 +1109,8 @@ while running:
 ① `np()` —— `norpagent` 模块是可调用的（模块类替换技术）。它等价于
 `norpagent.launch()`，内部依次完成：
 
-1. **参数分拣**：关键字参数中与 18 个槽位同名的键 → 槽位值；
+1. **参数分拣**：关键字参数中与槽位表（18 个内置槽位 + 运行时
+   register_slot 注册的自定义槽位）同名的键 → 槽位值；
    其余键 → 任务参数（如 `max_steps` / `task_timeout` / `workspace_root`）；
    特殊键 `prompt`（单次任务文本）与 `config`（字典形式的槽位赋值）；
 2. **架构层装配**：`ArchLayer(config, **slots)` → `mount_defaults()`
@@ -958,7 +1195,8 @@ eng.request_stop()
 
 ```python
 np(
-    # ── 架构槽位（18 个，不填 = 默认逻辑）──
+    # ── 架构槽位（18 个内置，不填 = 默认逻辑；register_slot 注册的
+    #    自定义槽位同样在此传参，见 3.8）──
     async_loop=..., agent_runtime=..., model=..., tools=...,
     session=..., sandbox=..., scheduler=..., context_store=...,
     project_manager=..., hooks=..., security=..., plugins=...,
@@ -978,11 +1216,27 @@ np(
     language="zh_CN",               # 界面语言（en / zh_CN）
     html="/path/to/my.html",        # 自定义主页面：文件路径或 HTML 内容
                                     # （替换 / 路由默认页面，见 5.4 节）
+    sse_queue_size=1024,            # SSE 每连接缓冲上限（0=不限，0.9）
+    sse_queue_policy="drop_oldest", # drop_oldest / drop_newest / unlimited
     # ── 其余键 = 任务参数，透传 Agent 循环 ──
     max_steps=32, task_timeout=0, call_timeout=0,
     workspace_root=..., system_prompt=...,
 )
 ```
+
+`config` 字典的子键约定（0.9，嵌入式 / 高并发调参，详见第 14 章）：
+
+```python
+np(config={
+    "loop": {"max_workers": 8, "poll_interval": 0.02},   # 循环工作池与轮询
+    "web": {"port": 9000, "sse_queue_size": 2048,        # Web UI 与 SSE 背压
+            "sse_queue_policy": "drop_oldest"},
+    "preset": "embedded",                                 # 槽位赋值同关键字
+})
+```
+
+> `preset="embedded"` 且未显式指定 frontend 时，默认前端自动为
+> headless（不启动 HTTP 服务，纯 API 模式），见 12.1 与第 14 章。
 
 ### 6.5 生命周期与 L1 钩子的对应
 
@@ -1196,22 +1450,33 @@ execute_tool_call / finalize_result`。子类覆写即可替换，
 ```python
 import norpagent as np
 
-np(security="high")                      # 槽位方式
+np(security="high")                      # 槽位方式（运行态策略，钩子零干预）
+np(security={"level": "high", "hooks": True})   # 槽位方式 + 显式钩子干预
 # 或：
 from norpagent import safe
 safe(registry, level="standard")         # 直接方式（basic / standard / high）
+safe(registry, level="standard", hooks=True)    # 显式开启钩子干预
+kit = safe(level="high")
+kit.install(registry)                    # 默认钩子零干预（不挂钩子）
+kit.install_hooks(registry)              # 需要干预时手动挂载
+kit.uninstall_hooks(registry)            # 随时卸下，恢复纯净钩子
 ```
 
 安全系统由独立函数 `safe()` 提供：内核不 import 任何
 `norpagent.security` 模块，防护/加固/审批/审计/签名通过
-`registry.security` 注入（由 before_input 等钩子执行）。
+`registry.security` 注入。**钩子零干预（默认）**：safe() 默认不订阅
+任何钩子，越狱防护与提示词加固不作为钩子订阅者自动挂到总线上，
+钩子管线保持纯净；需要干预时由用户显式开启（hooks=True /
+kit.install_hooks()），防护能力本身始终以独立 API 提供
+（kit.scan_input / kit.harden），用户可在自己的钩子订阅者或方法
+覆写中自由调用。
 
 ### 10.2 三档级别
 
 | 能力 | basic | standard | high |
 |---|---|---|---|
-| 输入越狱/注入防护（L3 钩子） | ✓ | ✓ | ✓ |
-| 系统提示词加固（L5 钩子） | ✓ | ✓ | ✓ |
+| 输入越狱/注入防护（L3 钩子，需显式开启） | ✓ | ✓ | ✓ |
+| 系统提示词加固（L5 钩子，需显式开启） | ✓ | ✓ | ✓ |
 | 插件源码 AST 审计 | warn | warn | **block** |
 | 插件导入限制 | off | safe | safe |
 | 权限声明（manifest permissions） | | | ✓ |
@@ -1220,10 +1485,11 @@ safe(registry, level="standard")         # 直接方式（basic / standard / hig
 | 强制受信任签名 | | | ✓ |
 
 SafetyKit 提供独立检查 API（scan_input / harden / audit /
-verify_plugin / check_network / approval_policy），可单独使用。
-插件加载继承当前安全级别（config 缺省时采用
-`registry.security.plugin_config()`）；未装 cryptography 时签名校验
-返回「不受信任」，不放行。详见 `docs/security.md`。
+verify_plugin / check_network / approval_policy），可单独使用；
+另有 install_hooks / uninstall_hooks / hooks_installed 控制钩子干预
+的显式挂载、卸载与查询。插件加载继承当前安全级别（config 缺省时
+采用 `registry.security.plugin_config()`）；未装 cryptography 时签名
+校验返回「不受信任」，不放行。详见 `docs/security.md`。
 
 ---
 
@@ -1244,18 +1510,21 @@ np(plugins=["./my_plugins"])     # 目录列表：签名→审计→导入限制
 
 ## 第 12 章　预设模式
 
-### 12.1 内置四模式
+### 12.1 内置六模式
 
 | 模式 | 用途 | 组件组合 |
 |---|---|---|
 | `minimal` | 模型基准测试 | mock + echo/get_time + memory |
 | `standard` | 通用编码任务 | sqlite + pooled + persistent + fts5 + 全部内置工具 |
+| `longrun` | 长周期复杂任务 | 同 standard；max_steps=512、不限时、分阶段规划提示词 |
 | `ptc` | 代码编排工具调用 | run_python（沙箱执行） |
 | `creative` | 自定义模式调试 | 模式文件加载（--mode-file） |
+| `embedded` | 嵌入式 / 边缘 / 低资源（0.9） | 纯内存组件 + 最小工具集，**默认 headless 前端**，无磁盘 / 无联网依赖；无凭据时模型自动回落 mock。详见第 14.2 节 |
 
 ```python
 np(preset="standard")
 np(preset="ptc")
+np(preset="embedded")                     # 默认 headless，纯 API 模式
 np(preset=Preset(name="mine", model="mock", tools=["echo"], ...))
 ```
 
@@ -1287,11 +1556,13 @@ np(preset=my)
 ```bash
 norpagent --list-modes
 norpagent --mode minimal                          # 交互 REPL
+norpagent --mode embedded                         # 嵌入式模式（无磁盘组件，0.9）
 norpagent --mode ptc --prompt "..."               # 单次任务
 norpagent --mode-file my_mode.py                  # 模式文件
 norpagent --mode standard --ui web --port 8787    # Web UI
 norpagent --mode standard --plugin-dir ./my_plugins
-norpagent --mode standard --safe high
+norpagent --mode standard --safe high               # 运行态安全策略（钩子零干预）
+norpagent --mode standard --safe high --safe-hooks  # 同时开启钩子干预
 norpagent plugin-sign --gen                       # 插件签名密钥
 ```
 
@@ -1300,9 +1571,165 @@ CLI 与 `np()` 等价：CLI 内部流程为
 
 ---
 
-## 第 14 章　库集成示例
+## 第 14 章　嵌入式与超高并发部署
 
-### 14.1 FastAPI 集成
+0.9 起，框架针对**嵌入式（低内存 / 低 CPU / 无磁盘 / 边缘设备）**与
+**超高并发服务器**两大场景做了专项优化。本章说明优化内容、配置
+入口与使用方式。
+
+### 14.1 优化清单
+
+**嵌入式场景（资源消耗最小化）：**
+
+| 优化 | 内容 |
+|---|---|
+| `install_core()` 极简装配 | 只注册运行 Agent 最小闭环的组件：mock / openai_compat 模型、echo / get_time / run_python / file_* 工具、memory 会话、subprocess 沙箱、simple 调度器、console UI——**零磁盘依赖、无 HTTP 组件、组件命名空间为空**（不导入 sqlite3 / http.server） |
+| builtin 包懒导入 | `import norpagent.builtin` 不再拉起 sqlite3 / http.server；FTS5 上下文库 / SQLite 会话 / 持久化调度器 / Web UI 全部改为 install_defaults 内按需导入 + 模块级 `__getattr__` 懒解析（`from norpagent.builtin import WebUI` 等写法兼容不变） |
+| WebUI 构造零磁盘 I/O | 配置 / FE 配置 / flow 图三份磁盘状态的读取全部延迟到 `start()`（`_ensure_disk_loaded`）；只构造不启动不再读盘，只读根文件系统 / 无 HOME 环境安全 |
+| 页面字节缓存 | `page_bytes()` 读入内存缓存：每次 GET / 不再读盘（此前每请求一次 open+read） |
+| `embedded` 预设 | 内置第六模式：纯内存组件 + 最小工具集 + 默认 headless 前端（不监听端口），无凭据时模型回落 mock |
+| 工作池收紧 | `NORPAGENT_MAX_WORKERS=1` 或 `config={"loop": {"max_workers": 1}}` 把守护工作线程压到最少；`NORPAGENT_SUBMIT_POLL=0.5` 调大轮询间隔省 CPU |
+
+**超高并发服务器（吞吐与内存上界）：**
+
+| 优化 | 内容 |
+|---|---|
+| EventBus 写时复制 | 订阅者表改为不可变快照：emit / intercept 在锁内只取引用、无锁迭代，**每条事件省去一次监听者列表复制**（流式逐 token 推送场景收益最大）。订阅 / 退订创建新列表替换引用，线程安全语义不变（实测 emit 吞吐 >150 万事件/秒） |
+| SSE 有界背压 | 每连接一个 `_SSESubscriber` 有界缓冲（默认 1024 条）：慢客户端**丢最旧事件**（`drop_oldest`，默认）自动降级，可选 `drop_newest` / `unlimited`；内存占用有上界，与客户端数量解耦 |
+| SSE 帧批量写出 | 攒满 32 条或 50ms 即一次 write+flush（`sse_batch` / `sse_batch_interval` 可配）：流式高频推送下系统调用次数大幅下降；单事件流延迟 ≤ 批间隔 |
+| SSE 快速断连回收 | TCP 半关闭后第一次写不报错，靠心跳才发现会延迟至多 15s——空闲每 1s 非阻塞 select 探测连接可读性，断开后 ≤1s 释放线程与缓冲；心跳注释仍每 15s 一次，不增加网络负担 |
+| HTTP 并发调优 | 监听积压 `request_queue_size=256`；`block_on_close=False` 停机不等连接关闭；`X-Accel-Buffering: no`（nginx 反代不攒批）；响应 keep-alive（HTTP/1.1） |
+| submit 轮询收紧 | 完成轮询间隔 0.2s → 0.05s（默认）：阻塞等待任务的调用线程完成感知延迟上限 200ms → 50ms；可配 / 环境变量覆盖 |
+| 循环内核微调 | `traceback` 提升模块级（回调异常路径零 import）；ready 队列快照批量执行保持防饥饿语义 |
+
+### 14.2 嵌入式部署
+
+**方式一：`install_core()` 自建注册表（依赖面最干净）：**
+
+```python
+from norpagent import Registry, AgentRuntime, install_core
+from norpagent.modes import build_embedded_preset
+
+reg = Registry()
+install_core(reg)                       # 不导入 sqlite3 / http.server
+reg.register_preset(build_embedded_preset())
+agent = AgentRuntime(reg, preset="embedded")
+result = agent.run("你好")
+print(result.final_content)
+```
+
+注意：`install_core` 的注册表上没有 context_store / project_manager /
+persistent 等组件——声明了这些组件的预设（standard / longrun /
+creative 等）在此注册表上装配会被明确拒绝（报错列出缺失组件名）。
+
+**方式二：`np(preset="embedded")`（开箱即用）：**
+
+```python
+import norpagent as np
+
+np(preset="embedded")                   # 默认 headless：不启动 HTTP 服务
+eng = np.current()
+result = eng.submit("你好")             # 纯 API 提交
+eng.request_stop()
+```
+
+embedded 预设的行为约定：
+
+- **默认前端自动回落 headless**（装配器默认工厂判断 preset 名）；
+  需要 Web 界面时显式
+  `np(preset="embedded", frontend="norpagent.frontends.web:WebFrontend")`；
+- 模型声明 `openai_compat`：提供任何凭据（参数 / 环境变量）即用真实
+  模型，否则回落 mock（离线设备开箱可用）；
+- 组件全部纯内存（memory / subprocess / simple），不声明通用组件——
+  FTS5 / SQLite 不会被构建，不产生落盘文件。
+
+**方式三（资源开关，与方式一/二叠加）：**
+
+```python
+# 工作线程压到 1；轮询放宽省 CPU
+os.environ["NORPAGENT_MAX_WORKERS"] = "1"
+os.environ["NORPAGENT_SUBMIT_POLL"] = "0.5"
+# 或等价：
+np(config={"loop": {"max_workers": 1, "poll_interval": 0.5}})
+```
+
+### 14.3 超高并发部署
+
+**SSE 背压配置（启动参数 → 环境变量 → 运行中热改变）：**
+
+```python
+import norpagent as np
+
+# 启动时传入
+np(config={"web": {"sse_queue_size": 2048, "sse_queue_policy": "drop_oldest"}})
+# 或运行时参数 / 环境变量
+np(sse_queue_size=2048, sse_queue_policy="drop_oldest")
+# NORPAGENT_SSE_QUEUE_SIZE=2048 NORPAGENT_SSE_QUEUE_POLICY=drop_oldest
+
+# 运行中热改变（无需重启，对既有连接立即生效）
+from norpagent.builtin.ui.web import WebUI
+ui = np.current().frontend._ui      # 或直接持有 WebUI 实例
+ui.set_sse_queue(sse_queue_size=4096, sse_queue_policy="drop_newest")
+print(ui.streams_info())
+```
+
+REST 运维入口：
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/streams` | 查询 SSE 背压配置与统计（订阅者数 / 丢弃事件数 / 各连接缓冲深度） |
+| `POST /api/streams` | 热改变：`{"sse_queue_size": 2048, "sse_queue_policy": "drop_oldest"}` |
+| `GET /api/status` | `sse_queue_size` / `sse_queue_policy` / `sse_dropped_total` 字段 |
+
+背压策略语义：
+
+| 策略 | 缓冲满时行为 | 适用 |
+|---|---|---|
+| `drop_oldest`（默认） | 丢最旧事件，客户端自动降级但**不掉线** | 展示型前端（聊天流） |
+| `drop_newest` | 丢最新事件，保持旧状态 | 「状态同步」型消费者 |
+| `unlimited` | 不限制（0.8 旧行为） | 明确知道客户端都会消费时 |
+
+缓冲大小 `sse_queue_size=0` 表示不限制。`sse_batch`（默认 32 条）与
+`sse_batch_interval`（默认 0.05s）控制帧批量写出粒度：越大系统调用
+越少、单事件延迟越高，按流量特征权衡。
+
+**反向代理注意**：SSE 响应已带 `X-Accel-Buffering: no`（nginx 不攒批）；
+代理层超时（proxy_read_timeout）应 > 15s（库内心跳周期）。
+
+**循环调参**：`config={"loop": {...}}` 与
+`NORPAGENT_MAX_WORKERS` / `NORPAGENT_SUBMIT_POLL` 见 4.3 与 14.1。
+任务完成感知延迟 = poll_interval（默认 50ms）；CPU 敏感环境调大，
+延迟敏感环境调小（下限 1ms）。
+
+**线程模型**：Web 前端每 SSE 连接一个 HTTP 线程（标准库
+socketserver 模型）；任务经 `WebFrontend._gate` 串行进入引擎，由
+循环工作池执行。事件发布路径 O(订阅者数) 且每订阅者摊销 O(1)
+（有界 deque + 空→非空一次 notify），万级并发推送不放大锁争用。
+
+**监控指标**（`GET /api/streams`）：`subscribers`（在线订阅者）、
+`dropped_total`（累计背压丢弃——持续增长说明客户端过慢，应调大
+缓冲或排查消费端）、`max_buffered`（各连接缓冲深度峰值）。
+
+### 14.4 验证方式
+
+库内验证脚本（`test/`）：
+
+```bash
+python test/_verify_embedded_concurrency.py   # 34 项：极简装配/懒导入/e2e/并发正确性/吞吐
+python test/_smoke_webui_09.py                # WebUI：懒磁盘 I/O/页面缓存/背压热改变/HTTP 并发/SSE
+python test/_smoke_embedded.py                # embedded 预设 e2e
+```
+
+覆盖要点：`install_core` 组件白名单与黑名单、`import norpagent.builtin`
+不拉 sqlite3 / http.server、embedded 默认 headless + mock 回落、
+环境变量收紧工作池、EventBus 写时复制并发订阅/退订正确性、
+submit 中断唤醒、SSE 三策略与热改变、40 并发 HTTP、断连回收。
+
+---
+
+## 第 15 章　库集成示例
+
+### 15.1 FastAPI 集成
 
 ```python
 import norpagent as np
@@ -1318,7 +1745,7 @@ def chat(text: str, session_id: str | None = None):
             "status": result.status}
 ```
 
-### 14.2 桌面应用集成（pywebview 风格）
+### 15.2 桌面应用集成（pywebview 风格）
 
 ```python
 import norpagent as np
@@ -1330,7 +1757,7 @@ fe = np.current().frontend
 # 事件总线订阅 on_content 把流式输出推回前端。
 ```
 
-### 14.3 集成要点
+### 15.3 集成要点
 
 1. **单例引擎**：运行中的引擎是单例，`np()` 幂等返回当前引擎；
 2. **生命周期**：主循环轮询 `np.stop()`，进程退出有 atexit 兜底清理；
@@ -1338,7 +1765,7 @@ fe = np.current().frontend
 
 ---
 
-## 第 15 章　测试与调试
+## 第 16 章　测试与调试
 
 ```bash
 python tests/test_p1_smoke.py    # 内核/协议冒烟
@@ -1359,9 +1786,9 @@ print(eng.last_result)        # 最近任务结果
 
 ---
 
-## 第 16 章　迁移指南
+## 第 17 章　迁移指南
 
-### 16.1 从旧版 norpagent（≤0.4）迁移
+### 17.1 从旧版 norpagent（≤0.4）迁移
 
 ```python
 # 旧写法：手工装配
@@ -1382,20 +1809,20 @@ result = np.current().last_result
 手工装配 API（Registry / AgentRuntime / Preset）**保留可用**；
 `np()` 是其声明式封装。
 
-### 16.2 从旧桌面应用迁移
+### 17.2 从旧桌面应用迁移
 
 旧应用中的模块可按以下映射接入槽位：
 
 | 旧应用模块 | 新槽位 | 接入方式 |
 |---|---|---|
-| `nasync_io`（自研事件循环） | `async_loop` | 实现 LoopRuntime 协议 → 填地址 |
+| `nasync_io`（自研事件循环） | `async_loop` | **已打包进库**：`norpagent.nasyncio` 即默认调度核心（原 nasync_io v2.0.0），无需自带文件；如需换实现再填地址 |
 | `async_loop.AsyncAgentLoop` | `agent_runtime` | 实现 run/shutdown → 填地址 |
 | FastAPI 后端 + 桌面 UI | `frontend` | 实现 Frontend 协议 → 填地址 |
 | `plugin_system` | `plugins` | 目录列表直接传 |
 | `sandbox_pool` | `sandbox` | `"pooled"` 或自研地址 |
 | `config.json` 各开关 | 预设 params | 任务参数透传 |
 
-### 16.3 版本兼容
+### 17.3 版本兼容
 
 - 协议模块（protocols）与内核（kernel）自 0.1 起向后兼容；
 - 0.5 新增 arch / loops / frontends / runtime 四个包；
@@ -1407,11 +1834,33 @@ result = np.current().last_result
   构造函数 / 配置字典 / 运行时参数四种途径替换 `/` 路由页面），
   并修复 `;key=value` 地址子句的解析链路；新增**运行中热挂载**
   （`np.remount()` 任何槽位运行时替换，见 3.7 节）；
+- 0.8 默认事件循环迁移到**自研 nasyncio 核心**（原 nasync_io
+  打包进库为 `norpagent.nasyncio`）：库内**零 `import asyncio`**，
+  不再依赖标准 asyncio（原因见 4.7）。默认地址改为
+  `norpagent.loops.nasyncio:NasyncioLoopRuntime`；0.7 旧地址
+  `norpagent.loops.std_asyncio:StdLoopRuntime` 保留为兼容垫片
+  （同一实现，不 import asyncio），历史代码不失效；
+- 0.9 嵌入式与超高并发专项优化（第 14 章）：`install_core()`
+  极简装配与 builtin 包懒导入（`import norpagent.builtin` 不再拉
+  sqlite3 / http.server）、`embedded` 预设（第六模式，默认 headless
+  前端）、WebUI 构造零磁盘 I/O 与页面字节缓存、EventBus 写时复制、
+  SSE 有界背压（默认 drop_oldest，可热改变）+ 帧批量写出 + 断连
+  快速回收、HTTP 并发调优、submit 轮询默认收紧到 0.05s（可配）。
+  行为兼容：SSE 默认缓冲上限 1024 条（慢客户端丢最旧，此前为
+  无界）；`unlimited` 策略 + `sse_queue_size=0` 可还原旧行为；
+- 0.9 槽位表热插拔（3.8 节）：`register_slot()` / `unregister_slot()`
+  运行时注册 / 注销**自定义槽位**（`SlotSpec.applier` 声明装配逻辑，
+  `remount_rebuild_agent` 声明热替换后是否热重建 AgentRuntime），
+  注册即接入 `np()` 参数校验、ArchLayer 装配（connect 幂等补齐晚
+  注册槽位）、`np.remount()` 热替换、`layer.describe()` 清单全管线；
+  支持 `replace=True` 规格热替换；内置 18 槽位受保护（值仍可随时
+  热替换）；槽位表操作线程安全。行为兼容：既有 18 槽位装配 / 热挂载
+  语义完全不变；
 - 删除性变更只会出现在大版本。
 
 ---
 
-## 第 17 章　常见问题（FAQ）
+## 第 18 章　常见问题（FAQ）
 
 **Q1：`np()` 会阻塞吗？**
 不会。引擎在后台线程运行，主线程继续执行——这正是
@@ -1436,7 +1885,7 @@ np(model="openai_compat", model_name="deepseek-v4-flash",
 
 **Q5：我能同时跑两个不同的 Agent 吗？**
 运行中的引擎是单例。需要多实例时直接用手工装配 API：
-`Registry() + AgentRuntime(...)`，不受单例约束（第 16.1 节）。
+`Registry() + AgentRuntime(...)`，不受单例约束（第 17.1 节）。
 
 **Q6：循环系统替换后钩子还工作吗？**
 工作。钩子挂在事件总线（底层最小内核）上，与循环系统无关。
@@ -1485,13 +1934,43 @@ frontend / async_loop 停旧启新；logger / storage / error_handler
 两个根因（详见第 4.6 节）：① Windows 上主线程阻塞在一次性
 `Event.wait()`（`WaitForSingleObject`）里收不到 SIGINT——pending
 interrupt 只在字节码边界被检查；现在 `submit()` 改为轮询等待
-（每 ≤0.2s 一次边界），Ctrl+C 即刻冒出 `KeyboardInterrupt`。
-② 卡在沙箱 `subprocess` / HTTP 里的工作线程杀不死，且 asyncio
-默认线程池在解释器退出时被强制 join——任务不结束进程就僵住；
-现在工作池用裸守护线程（退出不 join），且 Ctrl+C / 引擎停止会
-置位任务的取消事件：PTC 沙箱立即强杀子进程、池化沙箱杀进程树、
-模型流式中断、Agent 轮次边界以 stopped 收尾。任务执行体可用
+（每 ≤poll_interval 秒一次边界，默认 0.05s，可配），Ctrl+C 即刻
+冒出 `KeyboardInterrupt`。
+② 卡在沙箱 `subprocess` / HTTP 里的工作线程杀不死，且标准线程池
+（ThreadPoolExecutor，asyncio 的默认执行器也是它）在解释器退出时
+被强制 join——任务不结束进程就僵住；现在工作池用裸守护线程
+（退出不 join），且 Ctrl+C / 引擎停止会置位任务的取消事件：
+PTC 沙箱立即强杀子进程、池化沙箱杀进程树、模型流式中断、
+Agent 轮次边界以 stopped 收尾。任务执行体可用
 `norpagent.loops.cancel.cancel_requested()` 主动响应取消。
+
+**Q13：norpagent 依赖标准 asyncio 吗？**
+不依赖。0.8 起库内**零 `import asyncio`**：默认调度核心是打包
+进库的自研异步 IO 库 `norpagent.nasyncio`（原 nasync_io），底层
+只用 threading / selectors / socket 等非 asyncio 标准模块。
+声明、原因与验证方式详见第 4.7 节。
+
+**Q14：嵌入式设备 / 超高并发服务器怎么部署？（0.9）**
+- **嵌入式**：`install_core()` 自建注册表（不导入 sqlite3 /
+  http.server）+ `build_embedded_preset()`，或直接
+  `np(preset="embedded")`（默认 headless 前端、mock 回落）；工作
+  线程数用 `NORPAGENT_MAX_WORKERS=1`（或 `config={"loop":
+  {"max_workers": 1}}`）收紧，轮询用 `NORPAGENT_SUBMIT_POLL` 放宽。
+- **超高并发**：SSE 每连接有界缓冲默认 1024 条、慢客户端丢最旧
+  （`drop_oldest`），启动时 `np(config={"web": {"sse_queue_size":
+  2048}})` 配置，运行中 `WebUI.set_sse_queue(...)` / `POST
+  /api/streams` 热改变；帧批量写出（默认 32 条 / 50ms）降低系统
+  调用；EventBus 写时复制免每事件列表复制。完整说明见第 14 章。
+
+**Q15：框架没有我需要的槽位怎么办？（槽位表热插拔，0.9）**
+自己注册一个：`register_slot(SlotSpec(name=..., string_semantics=...,
+applier=...))`。注册即接入 `np()` 参数校验、装配、`np.remount()`
+热替换、`layer.describe()` 清单全管线；applier 拿到解析后的槽位值
+与 components / extras / overrides / meta 四个可变容器，可注册通用
+组件（`remount_rebuild_agent=True` 时热替换后热重建 AgentRuntime）、
+挂事件订阅（用 meta 记录退订，保证重入安全）、或向引擎提供附加
+对象。内置 18 槽位受保护不可覆盖 / 注销，其值可随时 `np.remount`
+热替换。完整契约见 3.8 节。
 
 ---
 
@@ -1499,7 +1978,7 @@ interrupt 只在字节码边界被检查；现在 `submit()` 改为轮询等待
 
 | 槽位 | 字符串语义 | 默认 | 工厂上下文键 |
 |---|---|---|---|
-| async_loop | address | StdLoopRuntime | layer, config |
+| async_loop | address | NasyncioLoopRuntime（自研 nasyncio 核心；config.loop 调 max_workers / poll_interval） | layer, config |
 | agent_runtime | address | AgentRuntime | registry, preset, ui, task_params, layer, config |
 | model | name_or_address | 预设声明 | layer, config |
 | tools | name | 预设声明 | - |
@@ -1511,7 +1990,7 @@ interrupt 只在字节码边界被检查；现在 `submit()` 改为轮询等待
 | hooks | literal | 标准 9 层 | - |
 | security | literal | 不开启 | - |
 | plugins | literal | 不加载 | - |
-| frontend | address | prompt→headless，否则 web | layer, config |
+| frontend | address | prompt / embedded→headless，否则 web | layer, config |
 | ui | name | 预设声明 | - |
 | preset | name | standard | - |
 | logger | literal | logging.getLogger("norpagent") | - |
@@ -1520,6 +1999,7 @@ interrupt 只在字节码边界被检查；现在 `submit()` 改为轮询等待
 
 > 运行中热挂载（3.7）：所有槽位均可 `np.remount(slot=value)` 替换。
 > `agent_runtime` 为 `defer_factory` 槽位（工厂推迟到引擎装配期调用）。
+> 槽位表热插拔（3.8）：`register_slot()` 可注册自定义槽位加入本表。
 
 ## 附录 B　9 层钩子速查表
 
@@ -1541,7 +2021,7 @@ interrupt 只在字节码边界被检查；现在 `submit()` 改为轮询等待
 # 模块入口
 np()                      # launch()
 np.stop()                 # 生命周期轮询
-np.nasyncio(address=...)  # 事件循环架构函数
+np.nasyncio(address=...)  # 事件循环架构函数（np.nasyncio 绑定自研核心模块，可调用）
 np.current() / np.submit() / np.shutdown()
 np.remount(model=..., ...)   # 运行中热挂载：任何槽位均可替换
 
@@ -1551,10 +2031,26 @@ from norpagent.arch import resolve_address, call_factory, AddressError
 layer.remount(slot, value)  # 架构层热挂载（模块缓存 + pyc 失效）
 layer.subconfig(slot)       # 槽位附加子配置（";key=value"）
 
+# 槽位表热插拔（3.8）
+from norpagent.arch import (register_slot, unregister_slot, SlotError,
+                            all_slot_names, snapshot_slots, is_builtin_slot)
+register_slot(SlotSpec(name=..., string_semantics=..., applier=...,
+                       remount_rebuild_agent=...))   # 注册自定义槽位
+register_slot(spec, replace=True)   # 热替换自定义槽位规格
+unregister_slot(name)               # 注销自定义槽位
+
 # 循环系统
-from norpagent.loops import nasyncio, LoopRuntime, StdLoopRuntime
+from norpagent.loops import (nasyncio, LoopRuntime,
+                             NasyncioLoopRuntime, StdLoopRuntime)
 from norpagent.loops.cancel import cancel_requested, current_cancel_event
 loop.interrupt()   # 请求取消全部在途 submit 任务（引擎停止路径）
+
+# 自研异步核心（已打包进库，不依赖标准 asyncio）
+import norpagent.nasyncio as core
+core.EventLoop / core.Future / core.Task        # 自研类型
+core.sleep / core.wait_for / core.ensure_future # 工具协程
+core.run_coroutine_threadsafe(coro, loop)       # 跨线程提交协程
+core.Event / core.Lock / core.Condition         # 同步原语
 
 # 前端
 from norpagent.frontends import (Frontend, ConsoleFrontend,
@@ -1566,14 +2062,24 @@ from norpagent.runtime import (launch, current, stop, submit,
 
 # 内核（手工装配，等价保留）
 from norpagent import (Registry, EventBus, Preset, AgentRuntime,
-                       RunResult, install_defaults, register_all_presets)
+                       RunResult, install_defaults, install_core,
+                       register_all_presets, build_embedded_preset)
+# install_core(reg)：嵌入式极简装配（无 sqlite3 / http.server 依赖）
+# build_embedded_preset()：嵌入式预设（第六模式）
 
 # 安全 / 钩子 / 插件
 from norpagent import safe, SafetyKit, SecurityContext
 from norpagent import hooks
 from norpagent.plugins import PluginSystem, install_plugin_dirs
+
+# Web UI：SSE 背压（超高并发，第 14.3 节）
+from norpagent.builtin.ui.web import WebUI
+ui = WebUI(port=8787, sse_queue_size=2048,
+           sse_queue_policy="drop_oldest")
+ui.set_sse_queue(4096, "drop_newest")   # 运行中热改变（POST /api/streams 等价）
+ui.streams_info()                        # 订阅者数 / 丢弃事件数 / 缓冲深度
 ```
 
 ---
 
-*NorpAgent 开发手册 · v0.7.0 · Copyright (c) 2026 xingluosama121, MIT Licensed*
+*NorpAgent 开发手册 · v0.9.0 · Copyright (c) 2026 xingluosama121, MIT Licensed*

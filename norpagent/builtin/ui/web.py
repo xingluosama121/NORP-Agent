@@ -16,8 +16,9 @@ Agent 的「界面」是可插拔的：本适配器实现 UIAdapter 协议，
   无需物理覆盖库文件；
 - REST API（供 front.html 的浏览器桥使用）：
   /api/sessions 会话 CRUD、/api/config 配置、/api/models 模型、
-  /api/plugins* 插件、/api/security 安全、/api/health 健康、
-  /api/usage 用量、/api/upload 文件上传、/api/quit 退出等。
+  /api/presets 预设模式（front「模式」选择器）、/api/plugins* 插件、
+  /api/security 安全、/api/health 健康、/api/usage 用量、
+  /api/upload 文件上传、/api/quit 退出等。
 
 用法（宿主应用 / CLI 集成）::
 
@@ -39,11 +40,12 @@ import errno
 import json
 import logging
 import os
-import queue
 import re
+import select
 import threading
 import time
 import uuid
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
@@ -68,19 +70,22 @@ _CLIENT_GONE_ERRORS = (
 
 
 class _RobustHTTPServer(ThreadingHTTPServer):
-    """稳健版 ThreadingHTTPServer（pip 库友好）。
+    """稳健版 ThreadingHTTPServer（pip 库友好，高并发调优）。
 
     - ``handle_error`` 覆盖：socketserver 默认对每个连接线程的
       未捕获异常调用 ``traceback.print_exc()``，客户端断连噪声
       （如 WinError 10053）会直接打进用户控制台。这里改为：
       断连静默，其余记 DEBUG 日志；
     - ``daemon_threads``：请求线程为守护线程，进程退出不挂起；
-    - ``allow_reuse_address``：重启后立即复用端口（避开 TIME_WAIT）。
-    """
+    - ``allow_reuse_address``：重启后立即复用端口（避开 TIME_WAIT）；
+    - ``request_queue_size``：监听积压队列放大（高并发接入不丢 SYN）；
+    - ``block_on_close = False``：shutdown 时不等待连接关闭，
+      高并发活跃连接下停机更快（请求线程本就守护）。"""
 
     daemon_threads = True
     allow_reuse_address = True
-    request_queue_size = 128
+    request_queue_size = 256
+    block_on_close = False
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         import sys as _sys
@@ -313,6 +318,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "plugin_network_url_allowlist": [],
     "plugin_network_domain_allowlist": [],
     "approval_enabled": True,
+    "preset_name": "",                     # 前端「模式」选择：注册表预设名（空 = 引擎当前预设）
     "flow_modules_dir": "",               # 模块流程「文件即模块」落盘目录（空 = 默认 ~/.norpagent/flow_modules）
     # front 智能体工具挂载（文件即模块 → 模型自动调用）：
     "agent_tools": [],                    # 显式工具全集（explicit=True 时生效；空 + 非显式 = 预设默认集）
@@ -359,6 +365,111 @@ def json_safe(obj: Any, depth: int = 0) -> Any:
     return str(obj)
 
 
+# ── SSE 背压策略（超高并发下的慢客户端治理）──────────────────
+
+_SSE_POLICIES = ("drop_oldest", "drop_newest", "unlimited")
+# 默认 SSE 缓冲上限（条）。高并发推送下每个连接最多积压此数量事件；
+# 慢客户端触发丢事件（默认丢最旧）而不是内存无限增长。
+_DEFAULT_SSE_QUEUE_SIZE = 1024
+_DEFAULT_SSE_POLICY = "drop_oldest"
+# 帧批量写出：攒满该条数或到达该间隔即一次 write+flush。
+# 流式 token 高频推送场景下大幅减少系统调用次数（超高并发关键）。
+_DEFAULT_SSE_BATCH = 32
+_DEFAULT_SSE_BATCH_INTERVAL = 0.05
+
+
+def _encode_sse_frame(item: dict) -> bytes:
+    """把一条事件编码为 SSE data 帧（模块级复用，避免每帧建 lambda）。"""
+    return (
+        f"data: {json.dumps(item, ensure_ascii=False, default=str)}\n\n"
+        .encode("utf-8")
+    )
+
+
+class _SSESubscriber:
+    """一个 SSE 连接的事件缓冲：有界双端队列 + 条件变量唤醒。
+
+    背压策略（``sse_queue_policy``，运行中可热改变）：
+
+    - ``drop_oldest``：缓冲满时丢最旧事件（默认——客户端自动降级
+      但不掉线，适合展示型前端）；
+    - ``drop_newest``：缓冲满时丢最新事件（保持旧状态、牺牲新事件，
+      适合「状态同步」型消费者）；
+    - ``unlimited``：无上限（旧行为；慢客户端可能导致内存增长，
+      仅在有明确理由时使用）。
+
+    缓冲上限 ``maxsize``（0 = 不限制）与策略均可由
+    ``WebUI.set_sse_queue()`` 在运行中热改变（对既有连接立即生效）。
+    """
+
+    __slots__ = ("buffer", "cond", "maxsize", "policy", "dropped")
+
+    def __init__(self, maxsize: int, policy: str) -> None:
+        self.buffer: deque = deque()
+        self.cond = threading.Condition()
+        self.maxsize = max(0, int(maxsize))
+        self.policy = policy if policy in _SSE_POLICIES else _DEFAULT_SSE_POLICY
+        self.dropped = 0  # 因背压丢弃的事件数（监控指标）
+
+    def push(self, item: dict) -> None:
+        """推送一条事件（线程安全）。空→非空转换时唤醒读者一次——
+        读者每次唤醒都会排空缓冲，无需逐条 notify（高并发减锁）。"""
+        with self.cond:
+            was_empty = not self.buffer
+            if self.maxsize <= 0 or self.policy == "unlimited":
+                self.buffer.append(item)
+            elif self.policy == "drop_newest":
+                if len(self.buffer) >= self.maxsize:
+                    self.dropped += 1
+                else:
+                    self.buffer.append(item)
+            else:  # drop_oldest（默认）
+                while len(self.buffer) >= self.maxsize:
+                    self.buffer.popleft()
+                    self.dropped += 1
+                self.buffer.append(item)
+            if was_empty:
+                self.cond.notify()
+
+    def resize(self, maxsize: int, policy: str) -> None:
+        """热改变上限与策略（对既有缓冲立即生效）。"""
+        with self.cond:
+            self.maxsize = max(0, int(maxsize))
+            if policy in _SSE_POLICIES:
+                self.policy = policy
+            if self.policy != "unlimited" and self.maxsize > 0:
+                while len(self.buffer) > self.maxsize:
+                    self.buffer.popleft()
+                    self.dropped += 1
+
+    def wait(self, timeout: float) -> Optional[dict]:
+        """阻塞取一条事件；超时返回 None。唤醒后只取一条——
+        剩余留给读者循环内的批量 drain（batched write）。"""
+        with self.cond:
+            if not self.buffer:
+                self.cond.wait(timeout)
+            if self.buffer:
+                return self.buffer.popleft()
+        return None
+
+    def drain(self, max_items: int) -> List[dict]:
+        """批量取走至多 max_items 条（配合 SSE 帧批量写出）。"""
+        with self.cond:
+            out = []
+            while self.buffer and len(out) < max_items:
+                out.append(self.buffer.popleft())
+            return out
+
+    def stats(self) -> Dict[str, Any]:
+        with self.cond:
+            return {
+                "buffered": len(self.buffer),
+                "maxsize": self.maxsize,
+                "policy": self.policy,
+                "dropped": self.dropped,
+            }
+
+
 class WebUI:
     """Web UI 适配器（HTTP + SSE，零第三方依赖，页面 = front.html）。"""
 
@@ -374,6 +485,10 @@ class WebUI:
         config: Optional[Dict[str, Any]] = None,
         config_path: Optional[str] = None,
         html: Optional[str] = None,
+        sse_queue_size: Optional[int] = None,
+        sse_queue_policy: Optional[str] = None,
+        sse_batch: Optional[int] = None,
+        sse_batch_interval: Optional[float] = None,
     ) -> None:
         self.port = int(port)
         self.host = host
@@ -391,12 +506,42 @@ class WebUI:
         )
         self._config: Dict[str, Any] = dict(DEFAULT_CONFIG)
         self._config["language"] = self._language
-        self._load_config_from_disk()
-        # 优先级：显式参数 > 磁盘持久化值 > 默认值
+        # 嵌入式优化：构造 WebUI 不再触发任何磁盘 I/O（原配置 / FE /
+        # flow 图读取全部推迟到 start() 的 _ensure_disk_loaded）。
+        # 显式参数记录在案，磁盘加载后重放，保持
+        # 「显式参数 > 磁盘持久化值 > 默认值」的优先级不变。
+        self._init_language = language
+        self._init_config = dict(config) if config else None
         if language is not None:
             self._config["language"] = language
         if config:
             self._config.update(config)
+        # SSE 背压与批量写出（超高并发调优；运行中可热改变）：
+        # 环境变量 NORPAGENT_SSE_QUEUE_SIZE / NORPAGENT_SSE_QUEUE_POLICY
+        # 仅在显式参数未给定时生效。
+        env_size = os.environ.get("NORPAGENT_SSE_QUEUE_SIZE")
+        if sse_queue_size is None and env_size:
+            try:
+                sse_queue_size = int(env_size)
+            except (TypeError, ValueError):
+                sse_queue_size = None
+        self._sse_queue_size = (
+            max(0, int(sse_queue_size))
+            if sse_queue_size is not None else _DEFAULT_SSE_QUEUE_SIZE
+        )
+        env_policy = os.environ.get("NORPAGENT_SSE_QUEUE_POLICY")
+        policy = sse_queue_policy or env_policy or _DEFAULT_SSE_POLICY
+        self._sse_queue_policy = (
+            policy if policy in _SSE_POLICIES else _DEFAULT_SSE_POLICY
+        )
+        self._sse_batch = (
+            max(1, int(sse_batch))
+            if sse_batch is not None else _DEFAULT_SSE_BATCH
+        )
+        self._sse_batch_interval = (
+            max(0.005, float(sse_batch_interval))
+            if sse_batch_interval is not None else _DEFAULT_SSE_BATCH_INTERVAL
+        )
         self._handler_fn: Optional[Callable] = None
         self._agent: Any = None
         # 预设默认工具集快照（attach_runtime 时捕获；agent_tools 回退基准）
@@ -405,7 +550,7 @@ class WebUI:
         self._quit_callback: Optional[Callable[[], None]] = None
         self._engine_state_fn: Optional[Callable[[], str]] = None
         self._lock = threading.RLock()
-        self._subscribers: List[queue.Queue] = []
+        self._subscribers: List[_SSESubscriber] = []
         self._history: List[dict] = []
         self._questions: Dict[str, Any] = {}
         self._question_sessions: Dict[str, str] = {}
@@ -426,7 +571,6 @@ class WebUI:
         self._fe_config_dir = os.path.join(
             os.path.expanduser("~"), ".norpagent", "fe_configs")
         self._fe_configs: Dict[str, Dict[str, Any]] = {}
-        self._load_fe_configs()
         # 模块流程自动保存：画布图 + 「应用到智能体」激活开关。
         # 激活时 front 主界面聊天任务改为按该流程执行（行为热切换）。
         self._flow_graph: Optional[Dict[str, Any]] = None
@@ -434,12 +578,34 @@ class WebUI:
         self._flow_graph_path = _default_flow_graph_path()
         # sid/task_id -> 聊天会话正在运行的 FlowRunner（支持 STOP）
         self._chat_flow_runs: Dict[str, Any] = {}
-        self._load_flow_graph_from_disk()
+        self._disk_loaded = False       # 磁盘状态延迟加载标记（嵌入式优化）
+        self._page_cache: Dict[str, bytes] = {}  # 页面字节缓存（避免每请求读盘）
         self._tlocal = threading.local()
         self._start_ts = time.time()
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._closed = False
+
+    def _ensure_disk_loaded(self) -> None:
+        """启动时一次性加载磁盘状态（配置 / FE 配置 / flow 图）。
+
+        构造期不再读盘（嵌入式 / 只读根文件系统友好）；显式构造
+        参数在磁盘加载后重放，保证「显式 > 磁盘 > 默认」优先级。
+        """
+        if self._disk_loaded:
+            return
+        with self._lock:
+            if self._disk_loaded:
+                return
+            self._load_config_from_disk()
+            # 重放显式构造参数（原构造期语义：显式覆盖磁盘）
+            if self._init_language is not None:
+                self._config["language"] = self._init_language
+            if self._init_config:
+                self._config.update(self._init_config)
+            self._load_fe_configs()
+            self._load_flow_graph_from_disk()
+            self._disk_loaded = True
 
     @staticmethod
     def _resolve_html(html: Optional[str]) -> Optional[bytes]:
@@ -614,6 +780,8 @@ class WebUI:
                     self._json(200, {"first_run": ui.first_run()})
                 elif path == "/api/models":
                     self._json(200, ui.list_models(query.get("base_url", [""])[0]))
+                elif path == "/api/presets":
+                    self._json(200, {"presets": ui.list_presets()})
                 elif path == "/api/fe/config":
                     self._json(200, ui.fe_load_config(
                         str(query.get("fe_id", [""])[0])))
@@ -625,6 +793,9 @@ class WebUI:
                     self._json(200, ui.get_security())
                 elif path == "/api/health":
                     self._json(200, ui.health())
+                elif path == "/api/streams":
+                    # SSE 背压配置查询 + 运行中热改变（超高并发运维）
+                    self._json(200, ui.streams_info())
                 elif path == "/api/usage":
                     self._json(200, ui.usage())
                 elif path == "/api/balance":
@@ -775,6 +946,13 @@ class WebUI:
                 elif path == "/api/agent/tools":
                     data = self._read_json()
                     self._json(200, ui.set_agent_tools(data))
+                elif path == "/api/streams":
+                    # 运行中热改变 SSE 背压（无需重启、对既有连接立即生效）
+                    data = self._read_json()
+                    self._json(200, ui.set_sse_queue(
+                        data.get("sse_queue_size"),
+                        data.get("sse_queue_policy"),
+                    ))
                 else:
                     self._json(404, {"error": "not found"})
 
@@ -823,36 +1001,86 @@ class WebUI:
                 self._json(404, {"error": "not found"})
 
             def _handle_sse(self) -> None:
+                """SSE 长连接：批量写帧 + 有界背压 + 快速断连回收。
+
+                - 帧批量写出：攒满 ``_sse_batch`` 条或到达
+                  ``_sse_batch_interval`` 秒即一次 write + flush——
+                  流式 token 高频推送下系统调用次数大幅下降；
+                - 背压：每连接一个 ``_SSESubscriber`` 有界缓冲
+                  （大小 / 策略可启动时配置、运行中热改变），
+                  慢客户端丢事件（默认丢最旧）而不是拖垮发布方
+                  或无限吃内存；
+                - 断连回收：TCP 半关闭后第一次写不报错（FIN 后仍可
+                  写），靠心跳才发现会延迟至多 15s——空闲轮询每 1s
+                  用非阻塞 select 探测连接可读性（FIN 即刻可见），
+                  断开后 ≤1s 内释放线程与缓冲（超高并发下防线程
+                  堆积）；心跳注释仍每 15s 一次，不增加网络负担。
+                """
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream; charset=utf-8")
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("Connection", "keep-alive")
+                # 反向代理（nginx 等）禁用响应缓冲，否则 SSE 会被攒批延迟
+                self.send_header("X-Accel-Buffering", "no")
                 self.end_headers()
-                q: "queue.Queue[dict]" = queue.Queue()
-                ui._register_subscriber(q)
-                try:
-                    # 先补发近期历史
-                    for item in ui._recent_history():
-                        self.wfile.write(
-                            f"data: {json.dumps(item, ensure_ascii=False, default=str)}\n\n".encode("utf-8")
-                        )
-                    self.wfile.flush()
-                    while True:
-                        try:
-                            item = q.get(timeout=15.0)
-                        except queue.Empty:
-                            self.wfile.write(b": keepalive\n\n")
-                            self.wfile.flush()
-                            continue
-                        self.wfile.write(
-                            f"data: {json.dumps(item, ensure_ascii=False, default=str)}\n\n".encode("utf-8")
-                        )
+                sub = ui._new_subscriber()
+                batch = ui._sse_batch
+                interval = ui._sse_batch_interval
+                pending: List[bytes] = []
+                last_keepalive = time.monotonic()
+
+                def _client_readable() -> bool:
+                    """连接是否可读（对端发数据或已关闭；SSE 客户端不应发数据）。"""
+                    try:
+                        readable, _, _ = select.select(
+                            [self.connection], [], [], 0)
+                        return bool(readable)
+                    except OSError:
+                        return True
+
+                def _flush() -> None:
+                    if pending:
+                        self.wfile.write(b"".join(pending))
                         self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError, OSError):
+                        pending.clear()
+
+                try:
+                    # 先补发近期历史（一次性批量写出）
+                    recent = ui._recent_history()
+                    if recent:
+                        self.wfile.write(b"".join(
+                            _encode_sse_frame(item) for item in recent))
+                        self.wfile.flush()
+                    while True:
+                        # 有积压时按批间隔等待（攒批期内新事件随时唤醒
+                        # 并入批）；空闲时每 1s 醒来做一次断连探测，
+                        # 心跳注释仍按 15s 节奏发送。
+                        timeout = min(interval, 1.0) if pending else 1.0
+                        item = sub.wait(timeout)
+                        if item is not None:
+                            pending.append(_encode_sse_frame(item))
+                            if len(pending) >= batch:
+                                _flush()
+                            continue
+                        if _client_readable():
+                            break  # 客户端已断开：立刻回收线程与缓冲
+                        if pending:
+                            # 攒批期结束：剩余帧落盘（单事件流延迟
+                            # ≤ sse_batch_interval）
+                            _flush()
+                        else:
+                            now = time.monotonic()
+                            if now - last_keepalive >= 15.0:
+                                self.wfile.write(b": keepalive\n\n")
+                                self.wfile.flush()
+                                last_keepalive = now
+                except (_CLIENT_GONE_ERRORS, OSError):
                     pass
                 finally:
-                    ui._unregister_subscriber(q)
+                    ui._drop_subscriber(sub)
 
+        # 启动即一次性加载磁盘状态（构造期零磁盘 I/O，嵌入式优化）
+        self._ensure_disk_loaded()
         self._server = self._bind(_Handler)
         # port=0 或端口顺延时以实际绑定结果为准（打印 listening on 用）
         self.port = int(self._server.server_address[1])
@@ -909,18 +1137,27 @@ class WebUI:
         front 页面优先返回 html 挂载参数指定的自定义内容
         （文件路径或 HTML 内容，构造时已解析缓存），
         未挂载时才读库内置 front.html。
+
+        v0.9 优化：页面字节读入内存缓存——高并发下每次 GET /
+        不再读盘（此前每请求一次 open+read）；同时消除嵌入式设备
+        上反复磁盘 I/O。资源文件是静态资产，进程内缓存安全。
         """
         if page == "front" and self._html_override is not None:
             return self._html_override
+        cached = self._page_cache.get(page)
+        if cached is not None:
+            return cached
         paths = {
             "front": _FRONT_HTML_PATH,
             "flow": _FLOW_HTML_PATH,
         }
         try:
             with open(paths.get(page, _FRONT_HTML_PATH), "rb") as f:
-                return f.read()
+                data = f.read()
         except OSError:
-            return _HTML_PAGE.encode("utf-8")
+            data = _HTML_PAGE.encode("utf-8")
+        self._page_cache[page] = data
+        return data
 
     def request_quit(self) -> None:
         """请求宿主应用退出（非阻塞）。"""
@@ -1097,14 +1334,19 @@ class WebUI:
     def stats(self) -> Dict[str, Any]:
         with self._lock:
             tasks = list(self._tasks.values())
+            subscribers = self._subscribers
+        streams = self.streams_info()
         return {
             "ui": self.ui_id,
             "port": self.port,
-            "subscribers": len(self._subscribers),
+            "subscribers": len(subscribers),
             "history": len(self._history),
             "tasks_total": len(tasks),
             "tasks_running": len(self._running_sessions),
             "language": self._config.get("language", "en"),
+            "sse_queue_size": streams["sse_queue_size"],
+            "sse_queue_policy": streams["sse_queue_policy"],
+            "sse_dropped_total": streams["dropped_total"],
             "tasks": tasks[-20:],
         }
 
@@ -1246,6 +1488,7 @@ class WebUI:
         sessions = sm.list_sessions()
         with self._lock:
             meta_map = dict(self._session_meta)
+            running = set(self._running_sessions.keys())
         out = []
         for sess in sessions:
             meta = meta_map.get(sess.id) or {}
@@ -1255,6 +1498,10 @@ class WebUI:
                 "workspace": meta.get("workspace") or "",
                 "created_at": meta.get("created_at")
                 or getattr(sess, "created_at", time.time()),
+                # front 会话 pill 状态：当前是否在执行任务
+                "running": sess.id in running,
+                "has_task": bool(sess.id in running
+                                 or getattr(sess, "message_count", 0)),
             })
         return out
 
@@ -1312,11 +1559,56 @@ class WebUI:
             needs = self._needs_key()
         return (not initialized) and needs and (not has_key)
 
+    def list_presets(self) -> List[Dict[str, Any]]:
+        """注册表全部预设（front「模式」选择器数据源）。
+
+        返回 [{name, description, mode, model}]：name 为切换时
+        回传的标识；mode 为 single / ptc / custom（展示标签用）。
+        ``*_arch`` 衍生预设（槽位覆盖时由装配层重建的内部实现）
+        不对外展示——它们是实现细节，基础预设才是用户可选模式。
+        """
+        reg = self._registry()
+        if reg is None:
+            return []
+        out: List[Dict[str, Any]] = []
+        for name in reg.list_presets():
+            if name.endswith("_arch"):
+                continue
+            try:
+                p = reg.resolve_preset(name)
+            except Exception:  # noqa: BLE001 — 预设解析失败跳过该项
+                continue
+            out.append({
+                "name": str(getattr(p, "name", "") or name),
+                "description": str(getattr(p, "description", "") or ""),
+                "mode": str(getattr(p, "mode", "") or ""),
+                "model": str(getattr(p, "model", "") or ""),
+            })
+        return out
+
+    @staticmethod
+    def _base_preset_name(name: str) -> str:
+        """衍生预设名 ``{base}_arch`` → 基础名（用于 front 展示与比较）。"""
+        name = str(name or "")
+        return name[:-5] if name.endswith("_arch") else name
+
     def get_config(self) -> Dict[str, Any]:
         with self._lock:
             cfg = dict(self._config)
         cfg["has_api_key"] = bool(cfg.get("api_key")) or not self._needs_key()
         cfg["first_run"] = self.first_run()
+        # 当前引擎「实际生效」的预设（front「模式」选择器初始显示；
+        # 以 agent 持有状态为准——配置里的 preset_name 可能保存了无效
+        # 值（热切换失败时），agent 状态才是真实结果；衍生名回基础名）
+        agent = self._agent
+        preset = getattr(agent, "preset", None) if agent is not None else None
+        raw = getattr(preset, "name", "") or ""
+        if raw:
+            cfg["current_preset"] = self._base_preset_name(raw)
+        else:
+            cfg["current_preset"] = self._base_preset_name(
+                str(cfg.get("preset_name") or "")
+            )
         # 工具挂载信息：注册表全部工具（原生 / 模块）+ 智能体当前生效集 + 预设默认集
         cfg["tools_info"] = self.tools_info()
         cfg["agent_effective_tools"] = self.agent_effective_tools()
@@ -2307,29 +2599,90 @@ class WebUI:
     # ── 内部 ───────────────────────────────────────────
 
     def _publish(self, item: dict) -> None:
+        """向全部 SSE 订阅者推送一条事件（发布方 O(订阅者数)，无列表复制）。
+
+        订阅者表与 EventBus 同款写时复制：此处只在锁内取引用，
+        每个订阅者的 push 是「有界 deque append + 空→非空时一次
+        notify」，摊销 O(1)——超高并发推送下不随订阅者数放大锁争用。
+        """
         with self._lock:
             self._history.append(item)
             if len(self._history) > self.history_limit:
                 self._history = self._history[-self.history_limit:]
-            subscribers = list(self._subscribers)
-        for q in subscribers:
-            try:
-                q.put_nowait(item)
-            except queue.Full:
-                pass
+            subscribers = self._subscribers
+        for sub in subscribers:
+            sub.push(item)
 
-    def _register_subscriber(self, q: "queue.Queue[dict]") -> None:
+    def _new_subscriber(self) -> _SSESubscriber:
+        """为一个 SSE 连接创建有界缓冲订阅者（当前背压配置）。"""
         with self._lock:
-            self._subscribers.append(q)
+            size = self._sse_queue_size
+            policy = self._sse_queue_policy
+        sub = _SSESubscriber(size, policy)
+        with self._lock:
+            self._subscribers = self._subscribers + [sub]
+        return sub
 
-    def _unregister_subscriber(self, q: "queue.Queue[dict]") -> None:
+    def _drop_subscriber(self, sub: _SSESubscriber) -> None:
+        """移除一个 SSE 订阅者（连接断开时调用；写时复制替换）。"""
         with self._lock:
-            if q in self._subscribers:
-                self._subscribers.remove(q)
+            self._subscribers = [s for s in self._subscribers if s is not sub]
 
     def _recent_history(self) -> List[dict]:
         with self._lock:
             return list(self._history[-200:])
+
+    # ── SSE 背压（超高并发运维：启动配置 + 运行中热改变） ──
+
+    def set_sse_queue(self, sse_queue_size: Optional[int] = None,
+                      sse_queue_policy: Optional[str] = None) -> Dict[str, Any]:
+        """运行中热改变 SSE 背压配置（无需重启，对既有连接立即生效）。
+
+        - ``sse_queue_size``：每连接缓冲上限（0 = 不限制）；
+        - ``sse_queue_policy``：drop_oldest（默认，慢客户端丢最旧）/
+          drop_newest / unlimited。
+
+        返回应用后的配置与订阅者统计。等价 REST 入口：POST /api/streams。
+        """
+        with self._lock:
+            if sse_queue_size is not None:
+                try:
+                    self._sse_queue_size = max(0, int(sse_queue_size))
+                except (TypeError, ValueError):
+                    pass
+            if isinstance(sse_queue_policy, str) and sse_queue_policy in _SSE_POLICIES:
+                self._sse_queue_policy = sse_queue_policy
+            size = self._sse_queue_size
+            policy = self._sse_queue_policy
+            subscribers = self._subscribers
+        for sub in subscribers:
+            sub.resize(size, policy)
+        return {
+            "ok": True,
+            "sse_queue_size": size,
+            "sse_queue_policy": policy,
+            "subscribers": len(subscribers),
+        }
+
+    def streams_info(self) -> Dict[str, Any]:
+        """SSE 背压状态与统计（GET /api/streams / stats / health 复用）。"""
+        with self._lock:
+            subscribers = self._subscribers
+            size = self._sse_queue_size
+            policy = self._sse_queue_policy
+            batch = self._sse_batch
+            interval = self._sse_batch_interval
+        per_sub = [s.stats() for s in subscribers]
+        return {
+            "sse_queue_size": size,
+            "sse_queue_policy": policy,
+            "sse_batch": batch,
+            "sse_batch_interval": interval,
+            "subscribers": len(subscribers),
+            "dropped_total": sum(s["dropped"] for s in per_sub),
+            "max_buffered": max((s["buffered"] for s in per_sub), default=0),
+            "subscriber_stats": per_sub,
+        }
 
     def shutdown(self) -> None:
         """停止 HTTP 服务并断开全部订阅者（幂等，可跨线程调用）。"""
@@ -2337,13 +2690,10 @@ class WebUI:
             if self._closed:
                 return
             self._closed = True
-            for q in self._subscribers:
-                try:
-                    q.put_nowait({"type": "notify", "message": "server closed",
-                                  "ts": time.time(), "sid": None})
-                except queue.Full:
-                    pass
-            self._subscribers.clear()
+            for sub in self._subscribers:
+                sub.push({"type": "notify", "message": "server closed",
+                          "ts": time.time(), "sid": None})
+            self._subscribers = []
             server = self._server
             self._server = None
         if server is None:

@@ -25,21 +25,38 @@ np() 阻塞到用户退出（/exit、exit()、Ctrl+C 或 EOF），无需轮询�
     np(frontend="norpagent.frontends.web:WebFrontend")  # 换前端（默认即 Web）
     np(session="sqlite", sandbox="pooled")       # 换会话与沙箱
 
+运行中也能换零件（热挂载，无需重启）：
+
+    np.remount(model="openai_compat")            # 换模型：下一次 run 生效
+    np.remount(frontend="norpagent.frontends.console:ConsoleFrontend")
+    np.remount(model="myapp.model:create")       # 改模块文件后重挂载即热重载
+
 事件循环系统是独立架构函数：
 
-    loop = np.nasyncio()                         # 默认循环（标准 asyncio 适配器）
+    loop = np.nasyncio()                         # 默认循环（自研 nasyncio 核心，零 asyncio 依赖）
     loop = np.nasyncio("myapp.nasync:create")    # 地址指向的自定义循环
 
 能力一览：
 - 架构层 + 地址函数：除底层最小内核（ArchLayer / 地址解析 /
   注册表 / 事件总线）外，全部组件都是槽位，填地址即可替换；
+- 槽位表热插拔（v0.9）：register_slot() / unregister_slot() 运行时
+  注册 / 注销自定义槽位——注册即接入 np() 参数校验、装配、
+  np.remount() 热替换、layer.describe() 清单全管线（内置 18 槽位
+  受保护，其值可随时热替换）；
+- 自研异步调度核心：norpagent.nasyncio（原 nasync_io，已打包进库）
+  是默认事件循环核心——不依赖、不 import 标准 asyncio；
+- 嵌入式与超高并发（v0.9）：install_core() 极简装配 + embedded
+  预设（纯内存、默认 headless、零磁盘依赖）；EventBus 写时复制、
+  SSE 有界队列 + 批量 flush、HTTP 并发调优——见手册
+  「嵌入式与超高并发部署」章；
 - 上下文管理：FTS5 上下文库（context_add / context_search / ...）
 - 项目管理：project_status（含 git 感知）
 - 长周期任务协作：persistent 调度器（task_submit / task_list / ...）
 - 沙箱池与 PTC 沙箱执行：pooled 沙箱 / run_python 子进程隔离
 - 9 层 29 钩子体系：每个执行结构都是独立 API，可订阅 / 改写 / 否决，
   支持自定义钩子与自定义层（norpagent.hooks）
-- 安全系统整体剥离：norpagent.safe() 一句话开启全套安全
+- 安全系统整体剥离：norpagent.safe() 一句话挂载全套安全策略，
+  默认钩子零干预（不挂钩子），hooks=True / kit.install_hooks() 才干预钩子
 - 外部插件：norpagent.plugins（签名 → 审计 → 导入限制 → 注册，
   支持进程级隔离与 PluginSystem 门面）
 - 前端体系：console / headless / web / 任意自定义前端
@@ -62,17 +79,37 @@ from norpagent.kernel import (
     RunResult,
     ComponentError,
 )
-from norpagent.builtin import install_defaults
-from norpagent.modes import register_all_presets
+from norpagent.builtin import install_defaults, install_core
+from norpagent.modes import register_all_presets, build_embedded_preset
 from norpagent.safe import safe, SafetyKit, SecurityContext
 from norpagent import hooks  # noqa: F401  # 9 层钩子体系（子模块 API）
-from norpagent.arch import ArchLayer, SlotSpec, SLOT_SPECS  # noqa: F401  # 架构层
-from norpagent.loops import nasyncio, LoopRuntime  # noqa: F401  # 事件循环架构函数
+from norpagent.arch import (  # noqa: F401  # 架构层
+    ArchLayer,
+    SlotSpec,
+    SlotError,
+    SLOT_SPECS,
+    register_slot,
+    unregister_slot,
+    is_builtin_slot,
+    snapshot_slots,
+)
+from norpagent.loops import (  # noqa: F401  # 事件循环架构函数
+    nasyncio as _arch_nasyncio,
+    LoopRuntime,
+    NasyncioLoopRuntime,
+    StdLoopRuntime,
+)
+# 顶层 np.nasyncio 绑定到库内置的自研调度核心模块（norpagent.nasyncio，
+# 原 nasync_io，已打包进库）。核心模块可调用：np.nasyncio() 等价于
+# 架构函数（返回 LoopRuntime）；np.nasyncio.EventLoop / Future / Task
+# 等自研类型直接访问。架构函数本体保留在 norpagent.loops.nasyncio。
+nasyncio = sys.modules["norpagent.nasyncio"]
 from norpagent.runtime import (
     launch,
     current,
     stop,
     submit,
+    remount,
     shutdown,
     is_running,
     NorpEngine,
@@ -86,7 +123,7 @@ from norpagent.frontends import (  # noqa: F401
     WebFrontend,
 )
 
-__version__ = "0.6.9"
+__version__ = "0.9.0"
 
 
 # ═══════════════════════════════════════════════════════
@@ -116,6 +153,12 @@ class _NorpAgentModule(_types.ModuleType):
         return launch(**kwargs)
 
     def nasyncio(self, address: Any = None, **config: Any) -> Any:
+        """np.nasyncio(...) 文档性声明。
+
+        实际调用由模块级属性 ``nasyncio``（自研核心模块，可调用）
+        遮蔽：模块属性查找优先于类方法，np.nasyncio() 走核心模块的
+        __call__（委托 norpagent.loops.nasyncio 架构函数）。
+        """
         return nasyncio(address, **config)
 
     def shutdown(self) -> None:
@@ -126,6 +169,21 @@ class _NorpAgentModule(_types.ModuleType):
 
     def submit(self, text: str, session_id: Optional[str] = None) -> Any:
         return submit(text, session_id=session_id)
+
+    def remount(self, **slot_values: Any) -> NorpEngine:
+        """运行中热挂载：向当前引擎替换任意槽位实现。
+
+        用法::
+
+            np.remount(model="openai_compat")      # 换模型（下一次 run 生效）
+            np.remount(tools=["echo"])             # 换工具集
+            np.remount(security="high")            # 换安全级别
+            np.remount(frontend="...:ConsoleFrontend")  # 换前端
+            np.remount(model="myapp.model:create") # 运行中替换模块文件
+
+        见 norpagent.runtime.remount 的槽位分组语义。
+        """
+        return remount(**slot_values)
 
     @property
     def version(self) -> str:
@@ -148,7 +206,9 @@ __all__ = [
     "RunResult",
     "ComponentError",
     "install_defaults",
+    "install_core",
     "register_all_presets",
+    "build_embedded_preset",
     "safe",
     "SafetyKit",
     "SecurityContext",
@@ -156,9 +216,16 @@ __all__ = [
     # 架构层
     "ArchLayer",
     "SlotSpec",
+    "SlotError",
     "SLOT_SPECS",
+    "register_slot",
+    "unregister_slot",
+    "is_builtin_slot",
+    "snapshot_slots",
     "nasyncio",
     "LoopRuntime",
+    "NasyncioLoopRuntime",
+    "StdLoopRuntime",
     "Frontend",
     "ConsoleFrontend",
     "HeadlessFrontend",
@@ -168,6 +235,7 @@ __all__ = [
     "current",
     "stop",
     "submit",
+    "remount",
     "shutdown",
     "is_running",
     "NorpEngine",

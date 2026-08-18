@@ -1,10 +1,12 @@
 # Copyright (c) 2026 xingluosama121, MIT Licensed
 """任务取消信号：submit 任务内的取消事件上下文（Ctrl+C / 引擎停止）。
 
-StdLoopRuntime.submit 把每个任务包进一个带取消事件的 contextvars
-上下文；任务执行体（沙箱 / 模型适配器 / 工具）随时可读
-``cancel_requested()`` 检查是否被请求取消，尽早自行退出——
-强杀子进程、中断流式读取，而不是等超时兜底。
+默认循环运行时（norpagent.loops.nasyncio.NasyncioLoopRuntime，
+调度核心为库内置自研 norpagent.nasyncio）的 submit 把每个任务
+包进一个带取消事件的 contextvars 上下文；任务执行体（沙箱 /
+模型适配器 / 工具）随时可读 ``cancel_requested()`` 检查是否被
+请求取消，尽早自行退出——强杀子进程、中断流式读取，而不是
+等超时兜底。
 
 实现细节：contextvars 随 ``contextvars.copy_context().run(fn)``
 流入工作线程，因此在工作线程内读取到的是当前任务的取消事件；

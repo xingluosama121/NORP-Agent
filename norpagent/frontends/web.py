@@ -44,6 +44,8 @@ class WebFrontend:
         host: str = "127.0.0.1",
         open_browser: bool = False,
         html: Optional[str] = None,
+        sse_queue_size: Optional[int] = None,
+        sse_queue_policy: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
         # 架构层工厂可能注入 config dict（如 np(config={"web": {...}}）
@@ -54,9 +56,18 @@ class WebFrontend:
             host = cfg.get("host", host)
             open_browser = bool(cfg.get("open_browser", open_browser))
             html = cfg.get("html", html)
+            if sse_queue_size is None:
+                sse_queue_size = cfg.get("sse_queue_size")
+            if sse_queue_policy is None:
+                sse_queue_policy = cfg.get("sse_queue_policy")
         self.port = int(port)
         self.host = str(host)
         self.open_browser = bool(open_browser)
+        # SSE 背压（超高并发）：None 时由 WebUI 用默认 / 环境变量
+        self._sse_queue_size: Optional[int] = (
+            int(sse_queue_size) if sse_queue_size is not None else None
+        )
+        self._sse_queue_policy: Optional[str] = sse_queue_policy
         # 自定义主页面（None = 库内置 front.html）。
         # 最终解析（内容 / 文件路径）在 WebUI 构造时进行：文件不存在
         # 会抛 ValueError 快速失败，而不是静默回落默认页面。
@@ -83,6 +94,11 @@ class WebFrontend:
         self.host = str(params.get("host", self.host))
         if "open_browser" in params:
             self.open_browser = bool(params["open_browser"])
+        # SSE 背压运行时参数透传（np(sse_queue_size=..., sse_queue_policy=...)）
+        if params.get("sse_queue_size") is not None:
+            self._sse_queue_size = int(params["sse_queue_size"])
+        if params.get("sse_queue_policy"):
+            self._sse_queue_policy = str(params["sse_queue_policy"])
         language = str(params.get("language") or "en")
         # np(html=...) 透传优先于构造时配置（与 port/host 一致）。
         # 值为空字符串视为未指定，回落构造值。
@@ -92,6 +108,8 @@ class WebFrontend:
         self._ui = WebUI(
             port=self.port, host=self.host, language=language,
             html=self._html,
+            sse_queue_size=self._sse_queue_size,
+            sse_queue_policy=self._sse_queue_policy,
         )
         self._ui.set_handler(self._handle_task)
         self._ui.attach_runtime(engine.agent)
@@ -158,17 +176,45 @@ class WebFrontend:
             )
 
     def _apply_config(self, cfg: Dict[str, Any]) -> None:
-        """页面保存配置后应用：模型 / 远端地址 / API Key / 插件目录 / 安全。"""
+        """页面保存配置后应用：模式 / 模型 / 远端地址 / API Key / 插件目录 / 安全。"""
         engine = self._engine
         if engine is None or cfg is None:
             return
         reg = engine.registry
+
+        # ── 模式：注册表预设热切换（front「模式」选择器） ──
+        # remount(preset=...) 会热重建 AgentRuntime（停旧沙箱 → 建新
+        # 运行时 → 前端重绑），因此任务执行中（gate 占用）跳过，等
+        # 下一次配置应用或重启生效；未变化同样跳过。
+        # 注意：槽位覆盖时装配层会把衍生预设命名为 {base}_arch，
+        # 比较统一用基础名，避免每次保存配置都误判为「模式变化」。
+        preset_name = str(cfg.get("preset_name") or "")
+        agent = engine.agent
+        current_name = ""
+        if agent is not None:
+            preset = getattr(agent, "preset", None)
+            raw = str(getattr(preset, "name", "") or "")
+            current_name = raw[:-5] if raw.endswith("_arch") else raw
+        if preset_name and preset_name != current_name:
+            if not self._gate.locked():
+                try:
+                    engine.remount(preset=preset_name)
+                except Exception:  # noqa: BLE001 — 预设名无效时保留当前模式
+                    pass
+                agent = engine.agent
+                if agent is not None:
+                    preset = getattr(agent, "preset", None)
+                    if preset is not None:
+                        # 预设热切换后刷新默认工具集快照（apply_agent_tools
+                        # 回退基准跟随新预设，而非旧预设的工具集）
+                        self._base_tools = list(getattr(preset, "tools", ()) or ())
+
+        # ── 模型：注册表适配器名 / 远端模型名 两种语义 ──
         agent = engine.agent
         model = str(cfg.get("model") or "")
         api_base = str(cfg.get("api_base") or "") or None
         api_key = str(cfg.get("api_key") or "") or None
 
-        # ── 模型：注册表适配器名 / 远端模型名 两种语义 ──
         if model in reg.list_models():
             if model in ("openai_compat", "anthropic"):
                 try:

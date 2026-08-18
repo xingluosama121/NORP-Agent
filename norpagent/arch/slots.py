@@ -18,12 +18,22 @@
 
 其余全部是槽位。给每个槽位填上地址，就可以把整个 Agent 应用
 换成完全不同的实现拼装体，而不需要修改任何核心代码。
+
+**槽位表本身也是热插拔的（v0.9）**：除 18 个内置槽位（框架结构
+契约，受保护不可注销 / 覆盖规格）外，第三方可运行时注册全新
+自定义槽位（``register_slot``）——注册即接入完整管线：``np()``
+参数校验、ArchLayer 装配、``np.remount()`` 热替换、
+``layer.describe()`` 清单。自定义槽位通过 ``SlotSpec.applier``
+声明装配逻辑（挂到注册表 / 预设 / 引擎），详见模块底部 API
+与开发手册 3.8 节。
 """
 
 from __future__ import annotations
 
+import keyword
+import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 
 @dataclass(frozen=True)
@@ -47,6 +57,28 @@ class SlotSpec:
             （registry / preset 上下文就绪后，由 NorpEngine._build_agent
             按签名裁剪注入）；架构层 connect 时只解析地址、不实例化。
             用于 agent_runtime 这类需要完整上下文的槽位。
+        applier: 自定义槽位的装配逻辑（内置槽位为 None，框架已内置
+            处理）。签名 ``applier(reg, layer, value, params, ctx)``：
+            槽位值非空时，由 runtime.mount.apply_slot_overrides 在
+            装配期与热挂载期调用。**同一注册表可能重复调用**
+            （np.remount 热挂载），applier 必须重入安全（重复执行
+            不叠加副作用；可利用 ctx["meta"] 记录待退订对象）。
+            ``value`` 是解析后的槽位值：address 语义为已实例化的
+            实现（可经 layer.subconfig(slot) 取 ``;key=value`` 子
+            配置），name / name_or_address / literal 语义为原值。
+            ``ctx`` 为四个可变容器：
+            - components: 最终预设的组件声明 {kind: name}——
+              applier 可 register_component 后在此登记；
+            - extras: 引擎附加对象字典（自定义对象交由此处，
+              引擎消费 extras[槽位名]）；
+            - overrides: 预设字段覆盖（model/tools/... 的最终值），
+              与内置槽位共用同一字典；
+            - meta: 注册表架构元数据（runtime.mount.arch_meta，
+              记录挂上去的可退订对象）。
+        remount_rebuild_agent: True 表示热挂载该槽位后需要**热重建
+            AgentRuntime**（自定义「装配型」槽位——applier 向预设
+            components 登记通用组件的槽位应置 True）；False（默认）
+            表示下一次 run() 生效或仅更新 extras，无需重建运行时。
     """
 
     name: str
@@ -57,6 +89,8 @@ class SlotSpec:
     factory_kwargs: Dict[str, str] = field(default_factory=dict)
     examples: List[str] = field(default_factory=list)
     defer_factory: bool = False
+    applier: Optional[Callable[..., None]] = None
+    remount_rebuild_agent: bool = False
 
     def format_help(self) -> str:
         lines = [
@@ -76,11 +110,26 @@ class SlotSpec:
 #  槽位全集
 # ═══════════════════════════════════════════════════════════
 
+# 槽位表线程安全：装配 / 热挂载都可能与注册发生在不同线程。
+_LOCK = threading.RLock()
+
+# 字符串语义全集（register_slot 校验用）
+_STRING_SEMANTICS = ("address", "name", "name_or_address", "literal")
+
+# launch() 的特殊键（槽位拆分前被弹出），不可作为槽位名
+_RESERVED_SLOT_NAMES = frozenset({"prompt", "config"})
+
+
+class SlotError(ValueError):
+    """槽位表热插拔非法操作（注册 / 注销 / 规格非法）。"""
+
+
 SLOT_SPECS: Dict[str, SlotSpec] = {}
 
 
 def _slot(spec: SlotSpec) -> SlotSpec:
-    SLOT_SPECS[spec.name] = spec
+    with _LOCK:
+        SLOT_SPECS[spec.name] = spec
     return spec
 
 
@@ -89,17 +138,20 @@ def _slot(spec: SlotSpec) -> SlotSpec:
 _slot(SlotSpec(
     name="async_loop",
     description="事件循环系统：Agent 运行所在的异步调度核心。"
-                "等价于架构函数 norpagent.nasyncio()。",
+                "等价于架构函数 norpagent.nasyncio()。"
+                "默认实现运行库内置的自研 nasyncio 事件循环核心"
+                "（norpagent.nasyncio，不依赖标准 asyncio）。",
     protocol=(
         "LoopRuntime 协议（norpagent.loops.base.LoopRuntime）："
         "start() 启动循环；stop() 请求停止；is_running()；join() 收尾；"
         "submit(fn, *a, **kw) 在循环上下文中执行同步函数并返回结果。"
     ),
-    default_address="norpagent.loops.std_asyncio:StdLoopRuntime",
+    default_address="norpagent.loops.nasyncio:NasyncioLoopRuntime",
     factory_kwargs={"layer": "所在架构层", "config": "该槽位的附加配置 dict"},
     examples=[
-        "np(async_loop='norpagent.loops.std_asyncio:StdLoopRuntime')  # 显式默认",
-        "np(async_loop='myapp.nasync_loop:create')                   # 自研循环",
+        "np(async_loop='norpagent.loops.nasyncio:NasyncioLoopRuntime')  # 显式默认（自研 nasyncio 核心）",
+        "np(async_loop='norpagent.loops.std_asyncio:StdLoopRuntime')   # 0.7 旧地址（兼容垫片，同指默认）",
+        "np(async_loop='myapp.nasync_loop:create')                     # 自研循环",
     ],
 ))
 
@@ -226,14 +278,16 @@ _slot(SlotSpec(
 
 _slot(SlotSpec(
     name="security",
-    description="安全系统（norpagent.safe() 的策略来源）。",
-    protocol="字符串级别（basic/standard/high）、SecurityContext 实例、"
-             "或 callable(registry) 完成安全装配。",
+    description="安全系统（norpagent.safe() 的策略来源，默认钩子零干预）。",
+    protocol="字符串级别（basic/standard/high）、配置 dict（level/hooks/config）、"
+             "SecurityContext 实例、或 callable(registry) 完成安全装配。"
+             "字符串与 dict 默认不挂钩子，hooks=True 才挂载钩子干预。",
     default_address=None,  # 默认逻辑 = 不开启额外安全
     string_semantics="literal",
     examples=[
         "np(security='high')",
-        "np(security=lambda reg: norpagent.safe(reg, level='standard'))",
+        "np(security={'level': 'high', 'hooks': True})",
+        "np(security=lambda reg: norpagent.safe(reg, level='standard', hooks=True))",
     ],
 ))
 
@@ -334,14 +388,140 @@ _slot(SlotSpec(
 ))
 
 
+# 内置槽位名快照：这些名字是框架结构契约（引擎 / 前端 / 文档引用），
+# 受保护——不可注销、不可覆盖规格；它们的「值」仍然随时热替换
+# （np.remount）。自定义槽位名不受此限制。
+_BUILTIN_SLOT_NAMES: frozenset = frozenset(SLOT_SPECS)
+
+
 def get_slot(name: str) -> SlotSpec:
     """按名取槽位规格，未知槽位抛 KeyError。"""
-    return SLOT_SPECS[name]
+    with _LOCK:
+        return SLOT_SPECS[name]
 
 
 def all_slot_names() -> List[str]:
-    """全部槽位名（按定义顺序）。"""
-    return list(SLOT_SPECS.keys())
+    """全部槽位名（按定义顺序，含运行时注册的自定义槽位）。"""
+    with _LOCK:
+        return list(SLOT_SPECS.keys())
 
 
-__all__ = ["SlotSpec", "SLOT_SPECS", "get_slot", "all_slot_names"]
+def snapshot_slots() -> Dict[str, SlotSpec]:
+    """槽位表快照：注册 / 注销期间的稳定视图。
+
+    装配循环（ArchLayer.connect / describe / launch 参数拆分 /
+    热挂载校验）使用快照迭代，避免与 register_slot /
+    unregister_slot 并发时 dict 迭代报错。
+    """
+    with _LOCK:
+        return dict(SLOT_SPECS)
+
+
+def is_builtin_slot(name: str) -> bool:
+    """该槽位名是否为受保护的内置槽位（18 个框架结构契约）。"""
+    return name in _BUILTIN_SLOT_NAMES
+
+
+def register_slot(spec: SlotSpec | Dict[str, Any], *,
+                  replace: bool = False) -> SlotSpec:
+    """注册一个自定义槽位——槽位表热插拔（v0.9）。
+
+    - ``spec``：SlotSpec 实例或字段字典（dict 自动构造）；
+    - 注册后立即生效：``np(newslot=...)`` 参数校验、ArchLayer 装配、
+      ``np.remount(newslot=...)`` 热替换、``layer.describe()`` 清单
+      全部认识新槽位，无需重启进程；
+    - ``replace=True``：热替换同名**自定义**槽位的规格（默认地址 /
+      字符串语义 / applier / 重建标志）。已装配的实现保持原状，
+      下一次 ``np.remount(slot=...)`` 按新规格重新解析。
+
+    保护规则：
+    - 18 个内置槽位名不可注册 / 覆盖 / 注销（框架结构契约，
+      其值可随时用 ``np.remount`` 热替换）；
+    - 槽位名必须是合法 Python 标识符（``np()`` 的关键字参数），
+      且不能是 Python 关键字、不能是 ``prompt`` / ``config``
+      （launch 的特殊键）；
+    - ``applier`` 为 None 或 callable；``string_semantics`` 必须是
+      address / name / name_or_address / literal 之一。
+
+    装配语义：
+    - ``applier(reg, layer, value, params, ctx)`` 在装配期与
+      热挂载期由 runtime.mount.apply_slot_overrides 调用（槽位值
+      非空时）。同一注册表可能重复调用（热挂载），applier 须
+      重入安全；ctx 提供 components / extras / overrides / meta
+      四个可变容器（详见 SlotSpec.applier 字段文档）；
+    - ``remount_rebuild_agent=True``：热挂载后热重建 AgentRuntime
+      （applier 向预设 components 登记通用组件的槽位应置 True）；
+    - 字符串语义与内置槽位相同：address（模块地址）/ name /
+      name_or_address / literal（原样透传给 applier）。
+    """
+    if isinstance(spec, dict):
+        spec = SlotSpec(**spec)
+    _validate_slot_spec(spec)
+    with _LOCK:
+        if spec.name in _BUILTIN_SLOT_NAMES:
+            raise SlotError(
+                f"槽位 '{spec.name}' 是内置槽位（框架结构契约），"
+                "不可注册 / 覆盖规格；内置槽位的值可随时用 "
+                "np.remount 热替换"
+            )
+        exists = spec.name in SLOT_SPECS
+        if exists and not replace:
+            raise SlotError(
+                f"槽位 '{spec.name}' 已注册；replace=True 可热替换其规格"
+            )
+        SLOT_SPECS[spec.name] = spec
+        return spec
+
+
+def unregister_slot(name: str) -> SlotSpec:
+    """注销一个自定义槽位，返回被移除的规格。
+
+    - 内置槽位名受保护，注销抛 SlotError；
+    - 已装配到架构层的实现保持原状（不再出现在 describe /
+      槽位校验中）；重新注册同名槽位后，np.remount 可重新解析。
+    """
+    with _LOCK:
+        if name in _BUILTIN_SLOT_NAMES:
+            raise SlotError(
+                f"槽位 '{name}' 是内置槽位（框架结构契约），不可注销"
+            )
+        spec = SLOT_SPECS.pop(name, None)
+        if spec is None:
+            raise SlotError(f"槽位 '{name}' 不存在（不可注销）")
+        return spec
+
+
+def _validate_slot_spec(spec: SlotSpec) -> None:
+    if not isinstance(spec, SlotSpec):
+        raise SlotError(f"spec 必须是 SlotSpec 实例，收到 {type(spec)}")
+    name = spec.name
+    if (not isinstance(name, str) or not name.isidentifier()
+            or keyword.iskeyword(name)):
+        raise SlotError(
+            f"槽位名 {name!r} 非法：必须是合法 Python 标识符"
+            "（np() 关键字参数名），且不能是 Python 关键字"
+        )
+    if name in _RESERVED_SLOT_NAMES:
+        raise SlotError(
+            f"槽位名 {name!r} 是 launch 特殊键（prompt / config），不可注册"
+        )
+    if spec.string_semantics not in _STRING_SEMANTICS:
+        raise SlotError(
+            f"槽位 '{name}' 的字符串语义 {spec.string_semantics!r} 非法；"
+            f"必须是 {list(_STRING_SEMANTICS)} 之一"
+        )
+    if spec.applier is not None and not callable(spec.applier):
+        raise SlotError(f"槽位 '{name}' 的 applier 必须是 callable 或 None")
+
+
+__all__ = [
+    "SlotSpec",
+    "SlotError",
+    "SLOT_SPECS",
+    "get_slot",
+    "all_slot_names",
+    "snapshot_slots",
+    "is_builtin_slot",
+    "register_slot",
+    "unregister_slot",
+]
