@@ -119,6 +119,8 @@ HeadlessFrontend 不读取键盘输入、不渲染界面，通过程序 API 驱�
 | 指定安全级别 | `np(security="high")` |
 | Web 端口 / 语言 | `np(port=9000, language="zh_CN")` |
 | 自定义主页面 | `np(html="/path/to/my.html")` |
+| 自定义模块流程页 | `np(flow_html="/path/to/flow.html")` |
+| 前端直挂 HTML 路径 | `np(frontend="/path/to/my.html")` |
 
 ---
 
@@ -532,32 +534,65 @@ np.remount(model="myapp.model:create")      # 运行中替换模块文件（热�
 | 基础设施槽位 | frontend / async_loop | 停旧实现、启新实现；新实现启动失败自动回滚旧实现。async_loop 替换时旧循环上在途任务会被放弃，建议无任务时替换 |
 | 基础服务槽位 | logger / storage / error_handler | 直接更新引擎引用，立即生效 |
 
-#### 3.7.1 热挂载前端页面（html 参数）
+#### 3.7.1 热挂载前端页面（html / flow_html 参数）
 
 `frontend` 是基础设施槽位，替换语义为「停旧启新」。配合 WebFrontend
-的 `html` 挂载参数，可在运行中换掉 `/` 路由页面——不用重启进程，
-刷新浏览器即见新页面：
+的 `html` / `flow_html` 挂载参数，可在运行中换掉 `/` 路由页面或
+`/flow` 模块流程页面——不用重启进程，刷新浏览器即见新页面：
 
 ```python
 import norpagent as np
 
-np(html="front.html")                       # 启动并挂载自定义页面
+np(html="front.html")                       # 启动并挂载自定义主页面
 # ... 修改 front.html 或换别的页面文件 ...
 np.remount(frontend="norpagent.frontends.web:WebFrontend;html=front.html")
 # 端口不变，浏览器刷新（或重开 http://127.0.0.1:8787/）即为新页面
+
+np.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=flow.html")
+# 换 /flow 模块流程编排页面（norp-flow.html 的官方挂载途径）
 ```
 
 参数优先级：remount **显式给出**的键覆盖启动参数，**未显式给出**的键
 （如 port）沿用启动参数——所以只换页面时浏览器 URL 不变。显式键的
 判定：字符串地址取分句 `;key=value` 中的键；实例取构造参数中与默认值
-不同的键（html 以 `_html` 属性判定）。例如：
+不同的键（html / flow_html 以 `_html` / `_flow_html` 属性判定）。例如：
 
 ```python
 np.remount(frontend="norpagent.frontends.web:WebFrontend;port=9000")  # 换端口
-np.remount(frontend="norpagent.frontends.web:WebFrontend;html=")      # 重置为库内置页
+np.remount(frontend="norpagent.frontends.web:WebFrontend;html=")      # 重置主页面为库内置
+np.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=") # 重置 /flow 为库内置
 from norpagent.frontends.web import WebFrontend
 np.remount(frontend=WebFrontend(html="front.html"))                   # 实例形式
+np.remount(frontend=WebFrontend(flow_html="flow.html"))               # 实例形式
+np.remount(frontend="front.html")     # HTML 路径直挂：等价于 WebFrontend;html=front.html
 ```
+
+**frontend 槽位两种挂载方式（v0.9，等价共存）**：
+
+1. 地址式：`np(frontend="norpagent.frontends.web:WebFrontend;html=...")`
+   —— 模块地址 + 分句参数；
+2. HTML 路径直挂：`np(frontend="front.html")` —— 槽位值本身是
+   `.html/.htm` 文件路径（不含 `;` 子句）时，架构层不再按模块地址
+   解析，装配器自动转换为 `WebFrontend(html=<该路径>)`。文件不存在
+   抛 `ValueError` 快速失败（不静默回落默认前端）。
+
+注意：HTML 路径直挂只作用于 `/` 主页面；换 `/flow` 页面请用
+`;flow_html=...` 子句或 `WebFrontend(flow_html=...)`。
+
+**运行中直接换页面（HTTP 服务不重启，端口不变）**：
+
+```python
+eng.frontend.mount_page("flow", "flow.html")   # /flow 立即换页
+eng.frontend.mount_page("flow", None)          # 卸载挂载，回落库内置
+eng.frontend.mount_page("front", "<html>...</html>")  # 同理作用于 /
+# 等价入口：WebUI.mount_page(page, html)
+```
+
+**物理替换库内 HTML 文件自动生效**：页面字节缓存按资源文件的
+mtime/size 签名校验——直接覆盖
+`norpagent/builtin/ui/assets/front.html` 或 `norp-flow.html`
+后刷新浏览器即为新页面（无需 remount、无需重启）；命中缓存时
+仅一次 stat 校验，无 open+read 磁盘 I/O。
 
 注意事项：`np.remount()` 是**进程内 API**，需在启动了引擎的同一
 Python 进程里调用（跨进程不生效）。cmd 中运行时，把 remount 放在
@@ -975,7 +1010,7 @@ class Frontend(Protocol):
 
 | 前端 | 地址 | 说明 |
 |---|---|---|
-| Web（默认） | `norpagent.frontends.web:WebFrontend` | HTTP + SSE，无第三方依赖；页面 = front.html（多标签会话/流式渲染/设置/插件面板）；控制台打印 `listening on http://127.0.0.1:8787/`；可配 `;port=9000`、`;html=自定义页面`（槽位挂载参数，见 5.4）或 `np(port=9000, language="zh_CN")` |
+| Web（默认） | `norpagent.frontends.web:WebFrontend` | HTTP + SSE，无第三方依赖；页面 = front.html（多标签会话/流式渲染/设置/插件面板），独立入口 `/flow` = norp-flow.html 模块流程编排；控制台打印 `listening on http://127.0.0.1:8787/`；可配 `;port=9000`、`;html=自定义主页`、`;flow_html=自定义流程页`（槽位挂载参数，见 5.4）或 `np(port=9000, language="zh_CN")`；frontend 槽位值可直接给 `.html` 路径（HTML 路径直挂，v0.9） |
 | 控制台 REPL | `norpagent.frontends.console:ConsoleFrontend` | 显式指定；`/exit`（或 `exit`/`quit`/`exit()`）退出，`/reset` 新会话；在 Python 交互式解释器中自动切换同步模式 |
 | 无头 | `norpagent.frontends.headless:HeadlessFrontend` | 纯 API；`prompt` 模式默认；输出（正文/工具/结果）打印到 stdout |
 
@@ -986,8 +1021,8 @@ Web UI 的行为与配置项：
 | 能力 | 说明 |
 |---|---|
 | 配置持久化 | 设置面板保存后落盘 `~/.norpagent/webui_config.json`（`NORPAGENT_WEBUI_CONFIG` 可覆盖；`WebUI(config_path=...)` 可指定，传 `None` 关闭）。磁盘加载只接受 `DEFAULT_CONFIG` 白名单键，未知键丢弃。0.9 起**磁盘加载延迟到 `start()`**：构造 WebUI 不再触发任何磁盘 I/O（嵌入式 / 只读根文件系统友好），显式构造参数 > 磁盘值 > 默认值的优先级不变 |
-| 页面防缓存 | 页面响应带 `Cache-Control: no-store`，浏览器每次刷新获取最新 front.html；服务端页面字节读入内存缓存（0.9：每次 GET / 不再读盘） |
-| 页面挂载（html 参数） | `/` 路由默认页面可整体替换：`html` 接收**文件路径**或 **HTML 内容**（strip 后以 `<` 开头视为内容，否则视为文件路径）；文件不存在时构造抛 `ValueError`（快速失败，不静默回落）。无需物理覆盖 `norpagent/builtin/ui/assets/front.html`。`/flow` 页面不受影响 |
+| 页面防缓存 | 页面响应带 `Cache-Control: no-store`，浏览器每次刷新获取最新 front.html；服务端页面字节读入内存缓存（0.9：每次 GET / 不再读盘），缓存按资源文件 mtime/size 签名校验——**物理替换库内 HTML 文件后刷新即自动生效**，命中缓存时仅一次 stat 校验 |
+| 页面挂载（html / flow_html 参数） | `/` 路由默认页面与 `/flow` 模块流程页面都可整体替换：`html` / `flow_html` 接收**文件路径**或 **HTML 内容**（strip 后以 `<` 开头视为内容，否则视为文件路径）；文件不存在时构造抛 `ValueError`（快速失败，不静默回落）。无需物理覆盖 `norpagent/builtin/ui/assets/front.html` / `norp-flow.html`。运行中可用 `mount_page(page, html)` 直接换页（HTTP 服务不重启、端口不变），`mount_page(page, None)` 卸载回落 |
 | 断连处理 | 客户端断连（WinError 10053 / EPIPE 等）静默处理，内部错误记录 DEBUG 日志；SSE 连接断开 ≤1s 内被非阻塞探测回收（0.9，防线程堆积） |
 | SSE 背压（0.9） | 每连接有界事件缓冲 + 帧批量写出，慢客户端自动降级，超高并发下内存有上界——详见第 14.3 节 |
 | 端口顺延 | 绑定失败（含 Windows 10013 监听占用）时向后顺延最多 10 个端口，以实际端口为准 |
@@ -1006,26 +1041,48 @@ ui = WebUI(port=9000, config_path="./my_app/webui.json")
 ui2 = WebUI(port=9000, config_path=None)
 ```
 
-**页面挂载（html 参数）四种写法等价：**
+**页面挂载（html / flow_html 参数）四种写法等价：**
 
 ```python
 import norpagent as np
 
 # 1. 槽位地址子句（;key=value，推荐）
 np(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
+np(frontend="norpagent.frontends.web:WebFrontend;flow_html=/path/to/flow.html")
 
 # 2. 构造函数直接传（WebFrontend / WebUI 均支持）
 np(frontend=WebFrontend(html="<html><body>我的界面</body></html>"))
+np(frontend=WebFrontend(flow_html="/path/to/flow.html"))
 
 # 3. 配置字典
-np(config={"web": {"html": "/path/to/my.html"}})
+np(config={"web": {"html": "/path/to/my.html", "flow_html": "/path/to/flow.html"}})
 
 # 4. 运行时参数透传
-np(html="/path/to/my.html")
+np(html="/path/to/my.html", flow_html="/path/to/flow.html")
+
+# 5. HTML 路径直挂（v0.9）：frontend 槽位值本身就是 .html 路径，
+#    等价于写法 1 的 html= 子句
+np(frontend="/path/to/my.html")
 
 # 文件路径不存在时构造报错（快速失败，不静默回落默认页面）
 # ValueError: WebUI html 挂载参数既不是 HTML 内容（以 '<' 开头）也不是存在的文件: ...
 ```
+
+**运行中热替换页面（HTTP 服务不重启、端口不变）：**
+
+```python
+eng = np()                                  # 或 np.current() 取运行中的引擎
+eng.frontend.mount_page("flow", "/path/to/flow.html")  # /flow 立即换页
+eng.frontend.mount_page("flow", None)                  # 卸载，回落库内置
+eng.frontend.mount_page("front", "<html>...</html>")   # / 路由同理
+# 等价底层 API：WebUI.mount_page(page, html)
+```
+
+**模块流程官方前端 norp-flow.html**：`/flow` 独立入口（拖拽模块 /
+beam 连线 / 后端真实执行 / 自动保存），随库发行于
+`norpagent/builtin/ui/assets/norp-flow.html`；不挂载时即为官方页面，
+挂载 `flow_html` 时整体替换。直接物理替换该文件同样自动生效
+（见上「页面防缓存」）。
 
 **仓库根目录 `front.html`（多宿主前端）**：pywebview 桌面协议的前端
 已改造为多宿主传输桥架构——浏览器宿主下自动构造
@@ -2739,12 +2796,20 @@ from norpagent.security import (scan_message, harden_system_prompt,
                                 ApprovalPolicy, NetworkPolicy, SourceAuditor,
                                 SignatureVerifier, generate_keypair, sign_plugin_file)
 
-# Web UI：SSE 背压（超高并发，第 14.3 节）
+# Web UI：页面挂载与热替换（5.4）+ SSE 背压（超高并发，第 14.3 节）
 from norpagent.builtin.ui.web import WebUI
+ui = WebUI(port=8787, html="/path/to/my.html",
+           flow_html="/path/to/flow.html")     # / 与 /flow 页面整体替换
 ui = WebUI(port=8787, sse_queue_size=2048,
            sse_queue_policy="drop_oldest")
+ui.mount_page("flow", "/path/to/new-flow.html")  # 运行中热换页（不重启服务）
+ui.mount_page("flow", None)                      # 卸载挂载，回落库内置
+ui.page_bytes("flow")                            # 当前 /flow 页面字节
 ui.set_sse_queue(4096, "drop_newest")   # 运行中热改变（POST /api/streams 等价）
 ui.streams_info()                        # 订阅者数 / 丢弃事件数 / 缓冲深度
+# WebFrontend 同构入口：frontend.mount_page(page, html)
+# frontend 槽位 HTML 路径直挂（v0.9）：
+#   np(frontend="/path/to/my.html")  ==  np(frontend="...WebFrontend;html=/path/to/my.html")
 ```
 
 ---
