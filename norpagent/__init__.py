@@ -30,6 +30,8 @@ np() 阻塞到用户退出（/exit、exit()、Ctrl+C 或 EOF），无需轮询�
     np.remount(model="openai_compat")            # 换模型：下一次 run 生效
     np.remount(frontend="norpagent.frontends.console:ConsoleFrontend")
     np.remount(model="myapp.model:create")       # 改模块文件后重挂载即热重载
+    np.remount(flow_html="H:/path/flow.html")    # 运行中换流程页（HTTP 不重启）
+    np.remount(html="H:/path/front.html")        # 运行中换主页面
 
 事件循环系统是独立架构函数：
 
@@ -43,6 +45,10 @@ np() 阻塞到用户退出（/exit、exit()、Ctrl+C 或 EOF），无需轮询�
   注册 / 注销自定义槽位——注册即接入 np() 参数校验、装配、
   np.remount() 热替换、layer.describe() 清单全管线（内置 18 槽位
   受保护，其值可随时热替换）；
+- 工作回退（v0.9）：快照时间线 + Undo / Redo / Rollback（np.undo() /
+  np.redo() / np.rollback()，Web UI 按钮 / Ctrl+Z，进程内即时生效）；
+  崩溃救援 CLI norpagent-rescue（纯标准库）；安全模式
+  np(safemode="on") 只加载最小化内核——见手册第 15 章；
 - 自研异步调度核心：norpagent.nasyncio（原 nasync_io，已打包进库）
   是默认事件循环核心——不依赖、不 import 标准 asyncio；
 - 嵌入式与超高并发（v0.9）：install_core() 极简装配 + embedded
@@ -116,6 +122,20 @@ from norpagent.runtime import (
     EngineState,
     EngineError,
 )
+# 工作回退（v0.9）：快照 / Undo / Redo / Rollback / 崩溃救援 / 安全模式
+from norpagent import recovery
+from norpagent.recovery import (  # noqa: F401
+    RecoveryError,
+    snapshot_system,
+    undo,
+    redo,
+    rollback,
+    list_snapshots,
+    mark_good as mark_good_snapshot,
+    last_good_id as last_good_snapshot,
+    register_snapshot_provider,
+    set_snapshot_dir,
+)
 from norpagent.frontends import (  # noqa: F401
     Frontend,
     ConsoleFrontend,
@@ -123,7 +143,7 @@ from norpagent.frontends import (  # noqa: F401
     WebFrontend,
 )
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 
 
 # ═══════════════════════════════════════════════════════
@@ -180,8 +200,10 @@ class _NorpAgentModule(_types.ModuleType):
             np.remount(security="high")            # 换安全级别
             np.remount(frontend="...:ConsoleFrontend")  # 换前端
             np.remount(model="myapp.model:create") # 运行中替换模块文件
+            np.remount(flow_html="/path/flow.html") # 运行中换流程页（HTTP 不重启）
+            np.remount(html="/path/front.html")     # 运行中换主页面
 
-        见 norpagent.runtime.remount 的槽位分组语义。
+        见 norpagent.runtime.remount 的槽位分组语义与页面热替换键。
         """
         return remount(**slot_values)
 
@@ -241,4 +263,16 @@ __all__ = [
     "NorpEngine",
     "EngineState",
     "EngineError",
+    # 工作回退（v0.9）
+    "recovery",
+    "RecoveryError",
+    "snapshot_system",
+    "undo",
+    "redo",
+    "rollback",
+    "list_snapshots",
+    "mark_good_snapshot",
+    "last_good_snapshot",
+    "register_snapshot_provider",
+    "set_snapshot_dir",
 ]

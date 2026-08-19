@@ -20,6 +20,19 @@
                    2. 地址子句   np(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
                    3. 配置字典   np(config={"web": {"html": "<html>...</html>"}})
                    4. 运行时参数 np(html="/path/to/my.html")
+    flow_html    自定义模块流程页面（槽位挂载参数）：同上四种途径，
+                 替换 /flow 路由默认的 norp-flow.html。
+    frontend 槽位直挂 HTML 路径（v0.9）：
+                 np(frontend="/path/to/my.html") —— 槽位值本身是
+                 存在的 .html/.htm 文件路径时，自动装配为
+                 WebFrontend(html=<该路径>)，与地址式挂载等价。
+
+运行中热替换页面（HTTP 服务不重启、端口不变）：
+    frontend.mount_page("front", html)   # 换 / 路由页面
+    frontend.mount_page("flow", html)    # 换 /flow 路由页面
+    frontend.mount_page("flow", None)    # 卸载挂载，回落库内置
+直接物理替换库内 assets/front.html 或 assets/norp-flow.html
+同样自动生效（页面字节缓存按文件 mtime/size 校验）。
 
 停止方式：页面「退出程序」按钮、np.stop() 轮询生命周期、
 或 np.shutdown() / 引擎 request_stop()。
@@ -44,6 +57,7 @@ class WebFrontend:
         host: str = "127.0.0.1",
         open_browser: bool = False,
         html: Optional[str] = None,
+        flow_html: Optional[str] = None,
         sse_queue_size: Optional[int] = None,
         sse_queue_policy: Optional[str] = None,
         **kwargs: Any,
@@ -56,6 +70,7 @@ class WebFrontend:
             host = cfg.get("host", host)
             open_browser = bool(cfg.get("open_browser", open_browser))
             html = cfg.get("html", html)
+            flow_html = cfg.get("flow_html", flow_html)
             if sse_queue_size is None:
                 sse_queue_size = cfg.get("sse_queue_size")
             if sse_queue_policy is None:
@@ -72,6 +87,8 @@ class WebFrontend:
         # 最终解析（内容 / 文件路径）在 WebUI 构造时进行：文件不存在
         # 会抛 ValueError 快速失败，而不是静默回落默认页面。
         self._html: Optional[str] = html if html else None
+        # 自定义模块流程页面（None = 库内置 norp-flow.html）。
+        self._flow_html: Optional[str] = flow_html if flow_html else None
         self._engine: Optional[Any] = None
         self._ui: Optional[Any] = None
         self._base_tools: List[str] = []  # 预设默认工具集快照
@@ -104,16 +121,27 @@ class WebFrontend:
         # 值为空字符串视为未指定，回落构造值。
         if params.get("html"):
             self._html = str(params["html"])
+        # np(flow_html=...) 透传优先于构造时配置（与 html 一致）。
+        if params.get("flow_html"):
+            self._flow_html = str(params["flow_html"])
 
+        # 安全模式：不读 WebUI 设置文件（坏配置可能就是启动失败
+        # 的原因），只保留核心回退能力。config_path="" = 关闭磁盘
+        # 读写（None 表示用默认路径）。
+        config_path = "" if getattr(engine, "safe_mode", False) else \
+            params.get("webui_config_path")
         self._ui = WebUI(
             port=self.port, host=self.host, language=language,
             html=self._html,
+            flow_html=self._flow_html,
             sse_queue_size=self._sse_queue_size,
             sse_queue_policy=self._sse_queue_policy,
+            config_path=config_path,
         )
         self._ui.set_handler(self._handle_task)
         self._ui.attach_runtime(engine.agent)
         self._ui.set_config_apply(self._apply_config)
+        self._ui.set_recovery_handler(self._handle_recovery)
         self._ui.set_quit_callback(
             lambda: engine.request_stop()
         )
@@ -166,6 +194,30 @@ class WebFrontend:
         agent._ui_listener = self._ui.on_event
         engine._bus.subscribe(self._ui.on_event)
         engine.subscribe_ui(self._ui)
+
+    def mount_page(self, page: str, html: Optional[str] = None) -> bytes:
+        """运行中热替换页面字节（HTTP 服务不重启、端口不变）。
+
+        - ``page``："front"（/ 路由）或 "flow"（/flow 路由）；
+        - ``html``：文件路径或 HTML 内容（strip 后以 "<" 开头视为
+          内容，否则视为文件路径；文件不存在抛 ValueError）；
+        - ``html=None``：卸载挂载，回落库内置资源文件。
+
+        已 attach 时立即作用于 WebUI（返回新页面字节）；未 attach
+        时只更新挂载参数，attach 时生效。同时保持 _html / _flow_html
+        与页面实际状态一致（后续 remount 热切换前端时沿用）。
+        """
+        if page not in ("front", "flow"):
+            raise ValueError(
+                f"mount_page 只支持 'front' / 'flow' 页面，收到 {page!r}"
+            )
+        if page == "front":
+            self._html = html
+        else:
+            self._flow_html = html
+        if self._ui is not None:
+            return self._ui.mount_page(page, html)
+        return b""
 
     def _handle_task(self, prompt_text: str, session_id: Optional[str],
                      task_params: Optional[Dict[str, Any]] = None) -> Any:
@@ -279,6 +331,54 @@ class WebFrontend:
             except Exception:  # noqa: BLE001
                 pass
 
+        # ── 工作回退：设置保存 = 一次系统变更，自动快照 ──
+        try:
+            from norpagent.recovery import notify_system_change
+
+            notify_system_change(engine, description="WebUI 设置保存")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _handle_recovery(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Web UI 回退面板的后端处理器（/api/snapshots 走这里）。
+
+        action: list / capture / undo / redo / rollback / mark_good。
+        引擎缺失或动作未知时返回 error 字段，不抛异常拖垮 HTTP。
+        """
+        engine = self._engine
+        try:
+            from norpagent import recovery
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"recovery 不可用: {exc}"}
+        if engine is None:
+            return {"ok": False, "error": "引擎尚未装配"}
+        try:
+            if action == "list":
+                items = recovery.list_snapshots()
+                return {"ok": True, "items": items,
+                        "current": recovery.store.current_id()
+                        if hasattr(recovery, "store") else None,
+                        "last_good": recovery.last_good_id()}
+            if action == "capture":
+                info = recovery.snapshot_system(
+                    description=str(payload.get("description") or "手动快照"),
+                    tag="manual", engine=engine)
+                return {"ok": True, "snapshot": info}
+            if action == "undo":
+                return {"ok": True, "result": recovery.undo(engine)}
+            if action == "redo":
+                return {"ok": True, "result": recovery.redo(engine)}
+            if action == "rollback":
+                result = recovery.rollback(
+                    snap_id=payload.get("id") or None, engine=engine)
+                return {"ok": True, "result": result}
+            if action == "mark_good":
+                info = recovery.mark_good(payload.get("id") or None)
+                return {"ok": True, "snapshot": info}
+            return {"ok": False, "error": f"未知动作: {action}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
     def _apply_agent_tools(self, cfg: Dict[str, Any]) -> None:
         """把配置中的智能体工具集热应用到运行中的 agent。
 
@@ -314,7 +414,8 @@ class WebFrontend:
         if self._ui is not None:
             self._ui.start()
             self.port = int(self._ui.port)
-            print(f"[norpagent] listening on http://{self.host}:{self.port}/")
+            print(f"[norpagent] frontend web listening on {self.host}:{self.port}")
+            self._print_lazy_modules()
             if self.open_browser:
                 try:
                     import webbrowser
@@ -335,6 +436,18 @@ class WebFrontend:
                 self._ui.shutdown()
             except Exception:  # noqa: BLE001
                 pass
+
+    @staticmethod
+    def _print_lazy_modules() -> None:
+        """打印本次进程已加载的懒加载模块（诊断信息，缺包环境静默）。"""
+        try:
+            from norpagent.builtin import list_loaded_lazy_modules
+
+            loaded = list_loaded_lazy_modules()
+        except Exception:  # noqa: BLE001 — 缺包环境静默
+            return
+        if loaded:
+            print("[norpagent] lazy-loaded modules: " + ", ".join(loaded))
 
     def is_alive(self) -> bool:
         return bool(self._ui is not None and getattr(self._ui, "_running", True))

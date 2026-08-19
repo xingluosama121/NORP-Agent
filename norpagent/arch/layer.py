@@ -6,6 +6,14 @@ ArchLayer 是「搭积木」的积木盘：
 1. 接收一组槽位值（关键字参数 / 配置字典）；
 2. 每个槽位不填 → 使用默认实现（库内置逻辑）；
 3. 填了地址 → 解析地址（norpagent.arch.address）并把实现接上槽位；
+   例外（v0.9）：frontend 槽位的字符串值若是 .html/.htm 文件路径，
+   按「HTML 路径直挂」语义透传给装配器（等价于
+   WebFrontend(html=<该路径>)），与地址式挂载两种写法共存；
+   v0.9.1：literal / name 槽位同样接受地址——字符串形如纯地址
+   （pkg.mod[:attr]，见 address.is_address_like）即按地址加载，
+   否则保持原语义；dict 槽位值的键值对支持纯地址解析（值形如
+   地址即解析为对象，解析失败抛 AddressError，hooks 槽位的值是
+   回调本身不调用）；
 4. 工厂类地址按签名裁剪注入上下文（layer / slot / config / ...），
    工厂不声明的键自动忽略，保证任意风格的工厂都能接入。
 
@@ -22,9 +30,14 @@ norpagent.arch.slots.register_slot() 运行时注册自定义槽位，
 from __future__ import annotations
 
 import inspect
+import os
 from typing import Any, Callable, Dict, Optional
 
-from norpagent.arch.address import AddressError, resolve_address
+from norpagent.arch.address import (
+    AddressError,
+    is_address_like,
+    resolve_address,
+)
 from norpagent.arch.slots import (
     SlotSpec,
     all_slot_names,
@@ -34,6 +47,78 @@ from norpagent.arch.slots import (
 
 # remount() 的「未指定新值」哨兵：与显式传 None（清空槽位）区分。
 _RAISE = object()
+
+# 「HTML 路径直挂」语义的槽位集合（v0.9）：这些槽位的字符串值
+# 若是 .html/.htm 文件路径，不再按模块地址解析，而是原样透传给
+# 装配器做语义化转换（frontend → WebFrontend(html=<路径>)）。
+_HTML_PATH_SLOTS = frozenset(("frontend",))
+
+
+def _is_html_path(value: str) -> bool:
+    """字符串是否是 HTML 文件路径（不校验存在性，存在性由装配器校验）。
+
+    判定：不含附加配置子句（";"——那是地址式挂载的 ;key=value，
+    例如 "WebFrontend;html=C:\\a\\b.html" 整体也以 .html 结尾，
+    必须排除），且以 .html/.htm 结尾。Windows 盘符路径
+    （"H:\\a\\b.html"）与相对路径（"./page.html"）均匹配；
+    模块地址（含 ; 子句）不匹配。
+    """
+    lowered = value.strip().lower()
+    if ";" in lowered:
+        return False
+    return lowered.endswith(".html") or lowered.endswith(".htm")
+
+
+def _resolve_dict_values(value: Dict[str, Any], slot: str,
+                         ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """递归解析 dict 槽位值中的纯地址字符串（键值对地址解析）。
+
+    全部槽位的 dict 形态值统一处理（tools 映射 / hooks 映射 /
+    自定义槽位 dict 值等）：
+
+    - 字符串值**形如纯地址**（``pkg.mod[:attr]``）→ 按地址解析为
+      对象（模块 / 工厂 / 实例）；解析失败抛 AddressError（严格：
+      写了地址就该明确报错，不静默回落）；
+    - 解析出 **callable** 时按工厂约定调用（``call_factory``，
+      注入 layer / slot / config；地址 ``;key=value`` 子句解析为
+      工厂 config）——**hooks 槽位除外**：其协议明确值是「回调
+      本身」（``{钩子名: 回调}``），地址指向的回调函数原样保留，
+      不调用；
+    - 嵌套 dict 递归处理（任意层级，继承同一调用上下文）；
+    - list 元素**不**解析——列表保持字面语义（如 plugins 的目录
+      路径列表；tools 列表元素由装配器按「名字或地址」特判）；
+    - 非字符串值原样保留。
+
+    ctx 由调用方构造（``ArchLayer._context``），含 layer / slot /
+    config 三键；本函数解析出的工厂子句 config 与 ctx["config"]
+    合并（工厂子句优先）。
+    """
+    out: Dict[str, Any] = {}
+    for key, item in value.items():
+        if isinstance(item, str) and is_address_like(item):
+            obj = resolve_address(item, slot=slot)
+            if callable(obj) and slot != "hooks":
+                cfg = dict(ctx.get("config") or {})
+                if ";" in item:
+                    cfg.update(_parse_subconfig_pairs(item))
+                obj = call_factory(obj, {**ctx, "config": cfg})
+            out[key] = obj
+        elif isinstance(item, dict):
+            out[key] = _resolve_dict_values(item, slot, ctx)
+        else:
+            out[key] = item
+    return out
+
+
+def _parse_subconfig_pairs(address: str) -> Dict[str, str]:
+    """解析字符串地址中的附加配置子句（``;key=value`` 对）。"""
+    cfg: Dict[str, str] = {}
+    if ";" in address:
+        for pair in address.split(";")[1:]:
+            if "=" in pair:
+                k, _, v = pair.partition("=")
+                cfg[k.strip()] = v.strip()
+    return cfg
 
 
 def call_factory(factory: Any, ctx: Dict[str, Any]) -> Any:
@@ -203,32 +288,70 @@ class ArchLayer:
         # 填了地址 / 值：按槽位声明的字符串语义处理
         semantics = spec.string_semantics
         if isinstance(value, str):
-            if semantics in ("name", "literal"):
-                # 注册表组件名 / 字面值：原样透传，由装配器语义化
+            # frontend 槽位的「HTML 路径直挂」语义（v0.9）：
+            # 值本身是 .html/.htm 文件路径时不再当模块地址解析，
+            # 原样透传给装配器（runtime.mount.coerce_frontend 会把
+            # 它装配为 WebFrontend(html=<该路径>)）。与地址式挂载
+            # （"pkg.mod:attr;html=..."）两种写法等价共存。
+            if slot in _HTML_PATH_SLOTS and _is_html_path(value):
                 self._subconfigs[slot] = {}
                 return value
-            if semantics == "name_or_address":
-                # 先按名、后按地址的判定放在装配器（需要注册表上下文）
+            if semantics in ("name", "name_or_address"):
+                # 注册表组件名 / 先名后地址：原样透传，由装配器决定
+                # （name_or_address 的地址解析同样在装配器进行——
+                # 需要注册表上下文做「先名」判定）。
                 self._subconfigs[slot] = {}
                 return value
-        elif semantics in ("name", "literal", "name_or_address"):
-            # 非字符串值（实例 / 回调 / 类）：同样原样透传，
+            if semantics == "literal":
+                # 字面值槽位「地址优先」（v0.9.1）：字符串形如纯地址
+                # （pkg.mod[:attr]）→ 按地址加载实现（解析失败抛
+                # AddressError，不静默回落）；其余（security 级别 /
+                # storage 路径 / logger 名等）保持字面值原样透传。
+                if is_address_like(value):
+                    impl = resolve_address(value, slot=slot)
+                    sub_config = self._parse_subconfig(value)
+                    self._subconfigs[slot] = sub_config
+                    if callable(impl):
+                        return call_factory(
+                            impl, self._context(slot, sub_config))
+                    return impl
+                self._subconfigs[slot] = {}
+                return value
+            # 默认语义 "address"：字符串解析为模块地址
+            impl = resolve_address(value, slot=slot)
+            sub_config = {}
+            if ";" in value:
+                sub_config = self._parse_subconfig(value)
+            self._subconfigs[slot] = sub_config
+            # defer_factory 槽位（agent_runtime）：只解析地址，不实例化。
+            # 工厂推迟到引擎装配期（NorpEngine._build_agent）调用，
+            # 此时 registry / preset 等完整上下文才就绪。
+            if callable(impl) and spec.defer_factory:
+                return impl
+            if callable(impl):
+                return call_factory(impl, self._context(slot, sub_config))
+            return impl
+        # 非字符串值：dict 统一做键值对地址解析（v0.9.1）——
+        # dict 值中形如纯地址的字符串按地址解析为对象（解析失败
+        # 抛 AddressError；解析出的 callable 按工厂约定调用，hooks
+        # 槽位除外——值是回调本身）。解析后的 dict 连同 name /
+        # literal / name_or_address 语义原样透传给装配器，address
+        # 语义则作为直接实现（工厂按调用约定处理）。
+        if isinstance(value, dict):
+            value = _resolve_dict_values(
+                value, slot, self._context(slot, {}))
+        if semantics in ("name", "literal", "name_or_address"):
+            # 非字符串值（实例 / 回调 / 类 / dict）：原样透传，
             # 由装配器决定如何注册 / 调用（不能当作地址工厂）。
             self._subconfigs[slot] = {}
             return value
-        # 默认语义 "address"：字符串解析为模块地址
-        impl = resolve_address(value, slot=slot)
-        sub_config = {}
-        if isinstance(value, str) and ";" in value:
-            sub_config = self._parse_subconfig(value)
-        self._subconfigs[slot] = sub_config
-        # defer_factory 槽位（agent_runtime）：只解析地址，不实例化。
-        # 工厂推迟到引擎装配期（NorpEngine._build_agent）调用，
-        # 此时 registry / preset 等完整上下文才就绪。
+        # address 语义：callable 按工厂调用，否则原样。
+        impl = value
+        self._subconfigs[slot] = {}
         if callable(impl) and spec.defer_factory:
             return impl
         if callable(impl):
-            return call_factory(impl, self._context(slot, sub_config or {}))
+            return call_factory(impl, self._context(slot, {}))
         return impl
 
     @staticmethod
@@ -239,15 +362,7 @@ class ArchLayer:
         ``键=值`` 对被解析为附加配置，注入工厂的 config 参数。
         纯地址（无分号）返回空字典。
         """
-        if ";" not in address:
-            return {}
-        parts = address.split(";")
-        cfg: Dict[str, str] = {}
-        for pair in parts[1:]:
-            if "=" in pair:
-                k, _, v = pair.partition("=")
-                cfg[k.strip()] = v.strip()
-        return cfg
+        return _parse_subconfig_pairs(address)
 
     def _context(self, slot: str, sub_config: Dict[str, Any]) -> Dict[str, Any]:
         """构造传给工厂的上下文（统一注入键）。"""

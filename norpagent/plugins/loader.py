@@ -1077,4 +1077,13 @@ def install_plugin_dirs(registry: Any, plugin_dirs: List[str],
                 config = plugin_config()
     loader = PluginLoader(plugin_dirs, config)
     loader.discover_and_load(registry)
+    # 工作回退：插件安装 = 一次系统变更，自动快照（失败静默）
+    try:
+        from norpagent.recovery import notify_system_change
+
+        notify_system_change(
+            description="插件安装: " + ", ".join(
+                str(d) for d in (plugin_dirs or [])[:3]))
+    except Exception:  # noqa: BLE001
+        pass
     return loader

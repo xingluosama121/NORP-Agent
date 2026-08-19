@@ -13,7 +13,12 @@ Agent 的「界面」是可插拔的：本适配器实现 UIAdapter 协议，
   双宿主共用，见 front_src/bridge.js）；资源缺失时回落到内置
   简易页面；构造参数 ``html`` 可挂载自定义主页面（文件路径或
   HTML 内容，strip 后以 "<" 开头视为内容），替换 / 路由默认页面，
-  无需物理覆盖库文件；
+  无需物理覆盖库文件；构造参数 ``flow_html`` 同理挂载
+  /flow 模块流程编排页面（norp-flow.html）；
+- 运行中热替换页面：``mount_page(page, html)`` 直接换掉
+  /（front）或 /flow 的页面字节（HTTP 服务不重启、端口不变）；
+  直接物理替换库内 assets 下的 HTML 文件同样自动生效
+  （页面字节缓存按文件 mtime/size 校验）；
 - REST API（供 front.html 的浏览器桥使用）：
   /api/sessions 会话 CRUD、/api/config 配置、/api/models 模型、
   /api/presets 预设模式（front「模式」选择器）、/api/plugins* 插件、
@@ -485,6 +490,7 @@ class WebUI:
         config: Optional[Dict[str, Any]] = None,
         config_path: Optional[str] = None,
         html: Optional[str] = None,
+        flow_html: Optional[str] = None,
         sse_queue_size: Optional[int] = None,
         sse_queue_policy: Optional[str] = None,
         sse_batch: Optional[int] = None,
@@ -500,6 +506,9 @@ class WebUI:
         #   strip 后以 "<" 开头 → 直接作为 HTML 内容；
         #   否则 → 视为文件路径（不存在抛 ValueError，快速失败）。
         self._html_override: Optional[bytes] = self._resolve_html(html)
+        # 自定义模块流程页面（槽位挂载参数）：/flow 路由的页面字节。
+        # 解析规则与 html 完全一致，回落对象为库内置 norp-flow.html。
+        self._flow_html_override: Optional[bytes] = self._resolve_html(flow_html)
         # 配置持久化路径：None 表示不落盘（纯内存，测试/嵌入式场景）
         self._config_path = (
             config_path if config_path is not None else _default_config_path()
@@ -543,6 +552,7 @@ class WebUI:
             if sse_batch_interval is not None else _DEFAULT_SSE_BATCH_INTERVAL
         )
         self._handler_fn: Optional[Callable] = None
+        self._recovery_handler: Optional[Callable] = None
         self._agent: Any = None
         # 预设默认工具集快照（attach_runtime 时捕获；agent_tools 回退基准）
         self._agent_base_tools: List[str] = []
@@ -579,7 +589,10 @@ class WebUI:
         # sid/task_id -> 聊天会话正在运行的 FlowRunner（支持 STOP）
         self._chat_flow_runs: Dict[str, Any] = {}
         self._disk_loaded = False       # 磁盘状态延迟加载标记（嵌入式优化）
-        self._page_cache: Dict[str, bytes] = {}  # 页面字节缓存（避免每请求读盘）
+        # 页面字节缓存：{page: (资源签名, 字节)}。签名 = 资源文件的
+        # (mtime_ns, size)，命中缓存时无需 open+read 磁盘 I/O，
+        # 物理替换文件后签名失配自动重读（热替换前端无需重启进程）。
+        self._page_cache: Dict[str, Tuple[Tuple[int, int], bytes]] = {}
         self._tlocal = threading.local()
         self._start_ts = time.time()
         self._server: Optional[ThreadingHTTPServer] = None
@@ -637,6 +650,45 @@ class WebUI:
     def set_handler(self, fn: Callable) -> None:
         """设置任务执行回调：fn(prompt, session_id, task_params) -> RunResult 类似对象。"""
         self._handler_fn = fn
+
+    def set_recovery_handler(self, fn: Callable) -> None:
+        """设置工作回退处理器：fn(action, payload) -> dict。
+
+        由 WebFrontend.attach 注入；未注入时 /api/snapshots 返回
+        明确错误（前端回退面板隐藏或提示不可用）。
+        """
+        self._recovery_handler = fn
+
+    def recovery_handle(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """工作回退 API 分发（/api/snapshots）。未注入处理器时给出
+        明确错误，而不是 500 让前端无从判断。"""
+        fn = self._recovery_handler
+        if fn is None:
+            return {"ok": False, "error": "工作回退未挂载（引擎未装配）"}
+        try:
+            return fn(action, payload or {})
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
+    def restore_config(self, incoming: Dict[str, Any]) -> Dict[str, Any]:
+        """恢复配置（工作回退用）：快照里的 WebUI 设置 -> 内存 + 磁盘 + 应用。
+
+        只接受 DEFAULT_CONFIG 白名单键（与磁盘加载规则一致）。
+        """
+        if not isinstance(incoming, dict):
+            return {"ok": False, "error": "配置必须是对象"}
+        with self._lock:
+            allowed = set(DEFAULT_CONFIG) | {"_initialized"}
+            merged = dict(self._config)
+            for key, value in incoming.items():
+                if key in allowed:
+                    merged[key] = value
+            merged["_initialized"] = True
+            self._config = merged
+            cfg = dict(merged)
+        self._save_config_to_disk(cfg)
+        self._apply_config(cfg)
+        return {"ok": True, "config": self.get_config()}
 
     def attach_runtime(self, agent: Any) -> None:
         """绑定 Agent 运行时（会话 REST API / 插件列表 / 调试信息的数据源）。"""
@@ -802,6 +854,9 @@ class WebUI:
                     self._json(200, {"balance": None, "error": None})
                 elif path == "/api/debug":
                     self._json(200, ui.debug_info())
+                elif path == "/api/snapshots":
+                    # 工作回退：快照时间线（回退面板数据源）
+                    self._json(200, ui.recovery_handle("list", {}))
                 elif path == "/api/flow/snapshot":
                     self._json(200, ui.flow_snapshot())
                 elif path == "/api/flow/load":
@@ -918,6 +973,14 @@ class WebUI:
                 elif path == "/api/security":
                     data = self._read_json()
                     self._json(200, ui.set_security(data))
+                elif path == "/api/snapshots":
+                    # 工作回退：capture / undo / redo / rollback / mark_good
+                    data = self._read_json()
+                    action = str(data.get("action") or "")
+                    payload = data.get("payload")
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    self._json(200, ui.recovery_handle(action, payload))
                 elif path == "/api/memory/clear":
                     data = self._read_json()
                     self._json(200, {"ok": True})
@@ -1134,30 +1197,71 @@ class WebUI:
         """返回页面字节：front=主聊天界面（front.html），
         flow=模块流程编排（norp-flow.html）。资源缺失时回落内置简易页面。
 
-        front 页面优先返回 html 挂载参数指定的自定义内容
-        （文件路径或 HTML 内容，构造时已解析缓存），
-        未挂载时才读库内置 front.html。
+        front 页面优先返回 html 挂载参数指定的自定义内容，
+        flow 页面优先返回 flow_html 挂载参数指定的自定义内容
+        （文件路径或 HTML 内容，构造时已解析缓存；运行中可用
+        mount_page() 热替换），未挂载时才读库内置资源文件。
 
         v0.9 优化：页面字节读入内存缓存——高并发下每次 GET /
-        不再读盘（此前每请求一次 open+read）；同时消除嵌入式设备
-        上反复磁盘 I/O。资源文件是静态资产，进程内缓存安全。
+        不再反复读盘；但缓存记录资源的 mtime/size 签名，页面
+        GET 时仅一次 stat 校验：直接物理替换库内 HTML 文件后
+        刷新浏览器即自动生效（热替换前端无需重启进程），
+        而命中缓存时仍无 open+read 磁盘 I/O。
         """
-        if page == "front" and self._html_override is not None:
-            return self._html_override
-        cached = self._page_cache.get(page)
-        if cached is not None:
-            return cached
+        override = (
+            self._html_override if page == "front"
+            else self._flow_html_override
+        )
+        if override is not None:
+            return override
         paths = {
             "front": _FRONT_HTML_PATH,
             "flow": _FLOW_HTML_PATH,
         }
+        path = paths.get(page, _FRONT_HTML_PATH)
         try:
-            with open(paths.get(page, _FRONT_HTML_PATH), "rb") as f:
+            st = os.stat(path)
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            # 资源缺失：回落内置简易页面（不缓存，避免修复文件后
+            # 仍被旧回落粘住）。
+            return _HTML_PAGE.encode("utf-8")
+        cached = self._page_cache.get(page)
+        if cached is not None and cached[0] == sig:
+            return cached[1]
+        try:
+            with open(path, "rb") as f:
                 data = f.read()
         except OSError:
-            data = _HTML_PAGE.encode("utf-8")
-        self._page_cache[page] = data
+            return _HTML_PAGE.encode("utf-8")
+        self._page_cache[page] = (sig, data)
         return data
+
+    def mount_page(self, page: str, html: Optional[str]) -> bytes:
+        """运行中热替换页面字节（HTTP 服务不重启、端口不变）。
+
+        - ``page``："front"（/ 路由）或 "flow"（/flow 路由）；
+        - ``html``：文件路径或 HTML 内容（strip 后以 "<" 开头视为
+          内容，否则视为文件路径；文件不存在抛 ValueError，与
+          构造参数 html / flow_html 的解析规则一致）；
+        - ``html=None``：卸载挂载，回落库内置资源文件。
+
+        返回挂载后的页面字节。线程安全（与页面 GET 互斥）。
+        """
+        if page not in ("front", "flow"):
+            raise ValueError(
+                f"mount_page 只支持 'front' / 'flow' 页面，收到 {page!r}"
+            )
+        with self._lock:
+            override = self._resolve_html(html)
+            if page == "front":
+                self._html_override = override
+            else:
+                self._flow_html_override = override
+            # 卸载或换页后失效磁盘缓存：下一次 GET 重新按最新
+            # 资源签名读取，保证回落内容一致。
+            self._page_cache.pop(page, None)
+        return self.page_bytes(page)
 
     def request_quit(self) -> None:
         """请求宿主应用退出（非阻塞）。"""

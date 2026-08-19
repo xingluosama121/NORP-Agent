@@ -26,6 +26,12 @@ import logging
 import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from norpagent.arch.address import (
+    AddressError,
+    is_address_like,
+    resolve_address,
+)
+from norpagent.arch.layer import call_factory
 from norpagent.arch.slots import snapshot_slots
 from norpagent.builtin import install_defaults
 from norpagent.kernel.presets import Preset
@@ -146,12 +152,28 @@ def apply_slot_overrides(reg: Registry, layer: Any,
     meta = _arch_meta(reg)
 
     # ── preset 槽位：决定基线预设 ──
+    # name_or_address（v0.9.1）：字符串先按已注册预设名、查不到再按
+    # 模块地址解析（地址可指向返回 Preset 实例的工厂）。
     preset_value = layer.get("preset")
     if isinstance(preset_value, Preset):
         reg.register_preset(preset_value)
         base_name = preset_value.name
     elif isinstance(preset_value, str):
-        base_name = preset_value
+        if preset_value in reg.list_presets():
+            base_name = preset_value  # 已注册预设名引用
+        else:
+            # 字符串不是已注册预设名 → 按模块地址解析
+            resolved = resolve_address(preset_value, slot="preset")
+            if not isinstance(resolved, Preset) and callable(resolved):
+                resolved = call_factory(
+                    resolved, layer._context("preset", {}))
+            if not isinstance(resolved, Preset):
+                raise ComponentError(
+                    f"preset 槽位地址 {preset_value!r} 的解析结果不是 "
+                    f"Preset 实例（收到 {type(resolved).__name__}）"
+                )
+            reg.register_preset(resolved)
+            base_name = resolved.name
     elif preset_value is None:
         base_name = "standard"  # 默认逻辑：功能完整的标准预设（全量工具）
     else:
@@ -170,8 +192,6 @@ def apply_slot_overrides(reg: Registry, layer: Any,
                 overrides["model"] = model  # 已注册名引用
             else:
                 # 字符串不是已注册名 → 按模块地址解析
-                from norpagent.arch.address import resolve_address
-
                 reg.register_model("_arch_model",
                                    resolve_address(model, slot="model"))
                 overrides["model"] = "_arch_model"
@@ -189,6 +209,10 @@ def apply_slot_overrides(reg: Registry, layer: Any,
         _apply_model_options(reg, overrides, params)
 
     # ── 工具集 ──
+    # v0.9.1：列表元素与单个字符串支持纯地址加载——元素/值形如
+    # 纯地址（pkg.mod[:attr]）即按地址解析为工具（解析失败抛错），
+    # 其余字符串为已注册工具名引用。dict 值的地址解析已在架构层
+    # 统一完成（layer._resolve_dict_values），此处收到的是对象。
     tools = layer.get("tools")
     if tools is not None:
         if isinstance(tools, dict):
@@ -196,15 +220,46 @@ def apply_slot_overrides(reg: Registry, layer: Any,
                 reg.register_tool(tname, tool)
             overrides["tools"] = list(tools.keys())
         elif isinstance(tools, (list, tuple)):
-            if tools and all(isinstance(x, str) for x in tools):
-                overrides["tools"] = list(tools)  # 名字引用
-            else:
-                names = []
-                for tool in tools:
-                    tname = getattr(tool, "name", "") or tool.__class__.__name__
-                    reg.register_tool(tname, tool)
+            names = []
+            for item in tools:
+                if isinstance(item, str):
+                    if is_address_like(item):
+                        impl = resolve_address(item, slot="tools")
+                        if callable(impl):
+                            sub = (
+                                layer._parse_subconfig(item)
+                                if ";" in item else {}
+                            )
+                            impl = call_factory(
+                                impl, layer._context("tools", sub))
+                        tname = (
+                            getattr(impl, "name", "")
+                            or impl.__class__.__name__
+                        )
+                        reg.register_tool(tname, impl)
+                        names.append(tname)
+                    else:
+                        names.append(item)  # 已注册工具名引用
+                else:
+                    tname = (
+                        getattr(item, "name", "")
+                        or item.__class__.__name__
+                    )
+                    reg.register_tool(tname, item)
                     names.append(tname)
-                overrides["tools"] = names
+            overrides["tools"] = names
+        elif isinstance(tools, str):
+            # 单个字符串：地址或工具名
+            if is_address_like(tools):
+                impl = resolve_address(tools, slot="tools")
+                if callable(impl):
+                    sub = layer._parse_subconfig(tools) if ";" in tools else {}
+                    impl = call_factory(impl, layer._context("tools", sub))
+                tname = getattr(impl, "name", "") or impl.__class__.__name__
+                reg.register_tool(tname, impl)
+                overrides["tools"] = [tname]
+            else:
+                overrides["tools"] = [tools]  # 单个工具名引用
         else:  # 单个 Tool 实例
             tname = getattr(tools, "name", "") or tools.__class__.__name__
             reg.register_tool(tname, tools)
@@ -223,8 +278,6 @@ def apply_slot_overrides(reg: Registry, layer: Any,
                 overrides[slot] = value  # 已注册名字引用
             else:
                 # 字符串不是已注册名 → 按模块地址解析
-                from norpagent.arch.address import resolve_address
-
                 _register_instance_or_factory(
                     reg, slot, f"_arch_{slot}",
                     resolve_address(value, slot=slot),
@@ -235,11 +288,24 @@ def apply_slot_overrides(reg: Registry, layer: Any,
             overrides[slot] = f"_arch_{slot}"
 
     # ── UI 渲染适配器 ──
+    # name_or_address（v0.9.1）：字符串先按已注册 UI 名、查不到再按
+    # 模块地址解析（地址可指向返回 UIAdapter 的工厂）。
     ui = layer.get("ui")
     if ui is not None:
-        reg.register_ui("_arch_ui", ui)
-        overrides["ui"] = "_arch_ui"
-        extras["ui_adapter"] = ui
+        if isinstance(ui, str):
+            if ui in reg.list_uis():
+                overrides["ui"] = ui  # 已注册名字引用
+            else:
+                impl = resolve_address(ui, slot="ui")
+                if callable(impl):
+                    impl = call_factory(impl, layer._context("ui", {}))
+                reg.register_ui("_arch_ui", impl)
+                overrides["ui"] = "_arch_ui"
+                extras["ui_adapter"] = impl
+        else:
+            reg.register_ui("_arch_ui", ui)
+            overrides["ui"] = "_arch_ui"
+            extras["ui_adapter"] = ui
 
     # ── 上下文库 / 项目管理（通用组件命名空间） ──
     for slot, kind in (("context_store", "context_store"),
@@ -434,6 +500,32 @@ def default_frontend_factory(layer: Any, prompt: Optional[str] = None,
     from norpagent.frontends.web import WebFrontend
 
     return WebFrontend(**web_cfg)
+
+
+def coerce_frontend(impl: Any, subconfig: Optional[Dict[str, Any]] = None) -> Any:
+    """frontend 槽位的「HTML 路径直挂」语义化（v0.9）。
+
+    架构层透传的 .html/.htm 文件路径字符串在这里转换为
+    WebFrontend(html=<路径>)，与地址式挂载
+    （"norpagent.frontends.web:WebFrontend;html=..."）等价；
+    其它实现（地址实例 / 实例 / None）原样返回。
+
+    文件不存在抛 ValueError（快速失败，不静默回落默认前端——
+    避免用户以为页面挂上了、实际跑的是内置页面）。
+    """
+    if not (isinstance(impl, str)
+            and ";" not in impl.strip()          # 含子句的是地址式挂载
+            and (impl.strip().lower().endswith(".html")
+                 or impl.strip().lower().endswith(".htm"))):
+        return impl
+    path = impl.strip()
+    if not os.path.isfile(path):
+        raise ValueError(
+            f"frontend 槽位的 HTML 路径不存在: {path!r}"
+        )
+    from norpagent.frontends.web import WebFrontend
+
+    return WebFrontend(html=path, **(dict(subconfig) if subconfig else {}))
 
 
 def mount_defaults(layer: Any, prompt: Optional[str] = None) -> None:

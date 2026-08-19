@@ -29,11 +29,44 @@
 from __future__ import annotations
 
 import importlib
+import re
 from typing import Any
 
 # 模块级约定工厂属性：地址指向一个文件、未指定 ":attr" 时，
 # 按此顺序寻找文件内的工厂入口。
 _FACTORY_ATTRS = ("create", "build", "default")
+
+# 「纯地址」结构：点分标识符（每段为合法 Python 标识符），
+# 可选 ":attr" 属性段。用于 is_address_like 的结构判定。
+_PURE_ADDRESS_RE = re.compile(
+    r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?::[A-Za-z_]\w*)?"
+)
+
+
+def is_address_like(value: Any) -> bool:
+    """字符串是否形如「纯地址」（``pkg.mod[:attr]``）。
+
+    纯结构判定：不导入模块、无副作用、不抛异常。
+
+    - 剥离 ``;key=value`` 附加子句后，整体为点分标识符
+      （每段是合法 Python 标识符），且至少含一个 ``.`` 或 ``:``；
+    - 因此 ``"high"`` / ``"./data"`` / ``"my_tool"`` /
+      ``"https://api.example.com"`` 等字面值、路径、URL
+      不会被误判为地址；
+    - ``"myapp.security:high"`` / ``"myapp.tools"`` /
+      ``"pkg:attr"`` 判定为地址。
+
+    用途：literal / name 语义槽位与 dict 键值对的「地址优先」
+    判定——形如地址的字符串按地址加载，其余保持原语义。
+    """
+    if not isinstance(value, str):
+        return False
+    addr = value.strip().split(";", 1)[0].strip()
+    if not addr:
+        return False
+    if not _PURE_ADDRESS_RE.fullmatch(addr):
+        return False
+    return "." in addr or ":" in addr
 
 
 class AddressError(ImportError):
@@ -97,4 +130,4 @@ def _resolve_string(address: str, slot: str) -> Any:
     return module
 
 
-__all__ = ["AddressError", "resolve_address"]
+__all__ = ["AddressError", "resolve_address", "is_address_like"]

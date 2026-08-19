@@ -89,6 +89,30 @@ def __getattr__(name: str) -> Any:
     return value
 
 
+def _all_lazy_entries() -> dict:
+    """汇总本包及子包（context / sessions）的全部懒加载映射。"""
+    entries = dict(_LAZY_EXPORTS)
+    for sub in ("norpagent.builtin.context", "norpagent.builtin.sessions"):
+        try:
+            mod = __import__(sub, fromlist=["_LAZY_EXPORTS"])
+            entries.update(getattr(mod, "_LAZY_EXPORTS", {}))
+        except Exception:  # noqa: BLE001 — 子包异常不影响主流程
+            pass
+    return entries
+
+
+def list_loaded_lazy_modules() -> list:
+    """返回本次进程已实际加载的懒加载模块名（按 sys.modules 命中）。
+
+    供前端 / CLI 启动后打印诊断信息：哪些重组件（sqlite3 / http.server
+    相关）真正被取用。未加载的懒加载模块不会出现在结果中。
+    """
+    import sys
+
+    loaded = {mod for mod, _ in _all_lazy_entries().values() if mod in sys.modules}
+    return sorted(loaded)
+
+
 def install_defaults(registry: Any) -> Any:
     """注册全部内置组件到注册表，返回注册表本身（便于链式调用）。"""
     # 重组件按需导入：只在完整装配时引入 sqlite3 / http.server 依赖

@@ -58,6 +58,7 @@ class NorpEngine:
         extras: Optional[Dict[str, Any]] = None,
         task_params: Optional[Dict[str, Any]] = None,
         prompt: Optional[str] = None,
+        safe_mode: bool = False,
     ) -> None:
         self.layer = layer
         self.registry = registry
@@ -67,6 +68,12 @@ class NorpEngine:
         self.extras: Dict[str, Any] = dict(extras or {})
         self.params: Dict[str, Any] = dict(task_params or {})
         self.prompt = prompt
+        # 安全模式：只加载最小化内核（插件全跳、配置回落默认）
+        self.safe_mode = bool(safe_mode)
+        # 快照模式 B（含会话数据文件）；由 np(snapshot_sessions="on") 设置
+        self._snapshot_sessions = False
+        # 「第一次任务完成」后标记快照正常（mark-good 只做一次）
+        self._first_task_marked = threading.Event()
 
         self._state = EngineState.STARTING
         self._state_lock = threading.Lock()
@@ -118,7 +125,58 @@ class NorpEngine:
                 name="norpagent-prompt-task",
                 daemon=True,
             ).start()
+        # 工作回退：启动基线快照 + 30 秒健康期后自动标记「正常」
+        # （快照失败不影响启动，救援能力是附加保障不是硬依赖）。
+        self._recovery_baseline()
         return self
+
+    def _recovery_baseline(self) -> None:
+        try:
+            from norpagent import recovery
+
+            recovery.snapshot_system(
+                description="启动基线"
+                + ("（安全模式）" if self.safe_mode else ""),
+                tag="baseline", engine=self,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        # 30 秒健康期：期间正常存活即标记「最后一次正常快照」
+        try:
+            threading.Thread(
+                target=self._recovery_health_mark,
+                name="norpagent-recovery-health",
+                daemon=True,
+            ).start()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _recovery_health_mark(self) -> None:
+        """启动成功后 30 秒存活 → 标记当前快照为「正常」。"""
+        time.sleep(30.0)
+        if not self.is_running():
+            return
+        try:
+            from norpagent import recovery
+
+            recovery.mark_good()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _recovery_mark_on_task(self, result: Any) -> None:
+        """首个成功任务完成 → 立即标记当前快照「正常」（只做一次）。"""
+        if self._first_task_marked.is_set():
+            return
+        if not getattr(result, "ok", True):
+            return
+        if not self._first_task_marked.is_set():
+            self._first_task_marked.set()
+        try:
+            from norpagent import recovery
+
+            recovery.mark_good()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _build_agent(self) -> None:
         """按 agent_runtime 槽位构造 Agent 运行时。
@@ -162,9 +220,12 @@ class NorpEngine:
         agent = self._agent
         if agent is None:
             raise EngineError("Agent 尚未装配")
-        return self.loop.submit(
+        result = self.loop.submit(
             lambda: agent.run(text, session_id=session_id, task_params=task_params)
         )
+        # 工作回退：首个成功任务 → 立即标记当前快照「正常」
+        self._recovery_mark_on_task(result)
+        return result
 
     # ── 运行中热挂载（任何槽位均可替换） ─────────────────
 
@@ -179,6 +240,8 @@ class NorpEngine:
             np.remount(frontend="...:ConsoleFrontend")     # 换前端
             np.remount(async_loop="myapp.loop:create")     # 换事件循环
             np.remount(model="myapp.model:create")         # 运行中替换模块文件
+            np.remount(flow_html="/path/new-flow.html")    # 运行中换流程页
+            np.remount(html="/path/new-front.html")        # 运行中换主页面
 
         替换语义按槽位分组（详见 norpagent.runtime.remount）：
 
@@ -205,6 +268,44 @@ class NorpEngine:
                 f"热挂载需要引擎在运行状态（当前 {self.state.value}）"
             )
         return remount_engine(self, **slot_values)
+
+    # ── 工作回退（快照 / Undo / Redo / Rollback） ────────
+
+    def snapshot(self, description: str = "", tag: str = "manual") -> Any:
+        """手动打快照（当前系统状态落盘）。"""
+        from norpagent import recovery
+
+        return recovery.snapshot_system(description=description, tag=tag,
+                                        engine=self)
+
+    def undo(self) -> Any:
+        """撤销最近一次操作（进程内即时生效）。"""
+        from norpagent import recovery
+
+        return recovery.undo(self)
+
+    def redo(self) -> Any:
+        """恢复最近一次撤销。"""
+        from norpagent import recovery
+
+        return recovery.redo(self)
+
+    def rollback(self, snap_id: Optional[str] = None) -> Any:
+        """回退到任意快照（缺省 = 最后一次正常快照）。"""
+        from norpagent import recovery
+
+        return recovery.rollback(snap_id=snap_id, engine=self)
+
+    def list_snapshots(self) -> Any:
+        from norpagent import recovery
+
+        return recovery.list_snapshots()
+
+    def mark_good(self, snap_id: Optional[str] = None) -> Any:
+        """标记快照为「正常工作」。"""
+        from norpagent import recovery
+
+        return recovery.mark_good(snap_id)
 
     def _swap_agent(self) -> None:
         """热重建 Agent 运行时（装配槽位替换后）。

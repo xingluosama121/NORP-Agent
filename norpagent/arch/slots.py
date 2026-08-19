@@ -26,6 +26,20 @@
 ``layer.describe()`` 清单。自定义槽位通过 ``SlotSpec.applier``
 声明装配逻辑（挂到注册表 / 预设 / 引擎），详见模块底部 API
 与开发手册 3.8 节。
+
+**全部槽位支持按地址加载（v0.9.1）**：
+
+- name / name_or_address 槽位：字符串先按注册表名、查不到再按
+  模块地址（``pkg.mod[:attr]``）加载；
+- literal 槽位（hooks / security / plugins / logger / storage /
+  error_handler）：字符串**形如纯地址**（含 ``.`` 或 ``:`` 的
+  点分标识符，见 ``norpagent.arch.address.is_address_like``）
+  即按地址加载，否则保持字面值（级别 / 路径 / 目录）；
+- 任何槽位的 **dict 键值对**：值若是纯地址字符串，统一按地址
+  解析为对象（解析失败抛 ``AddressError``）——例如
+  ``tools={"my_tool": "myapp.tools:create"}``、
+  ``hooks={"before_model_call": "myapp.guard:fn"}``；
+- tools 列表元素同样支持地址：``tools=["myapp.tools:create"]``。
 """
 
 from __future__ import annotations
@@ -48,7 +62,15 @@ class SlotSpec:
             "address"          -> 字符串是模块地址（"pkg.mod[:attr]"）；
             "name"             -> 字符串是注册表中的组件名（原样透传）；
             "name_or_address"  -> 先按组件名、再按模块地址解析；
-            "literal"          -> 字符串是字面值（级别 / 路径等）。
+            "literal"          -> 字符串是字面值（级别 / 路径等）；
+            **v0.9.1 起全部槽位都支持按地址加载**：
+            - name / name_or_address 槽位：字符串先查注册表名，
+              查不到再按模块地址解析（"pkg.mod[:attr]"）；
+            - literal 槽位：字符串**形如纯地址**（含 "." 或 ":"
+              的点分标识符）即按模块地址加载，否则保持字面值
+              （地址优先，见 norpagent.arch.address.is_address_like）；
+            - 任何槽位的 **dict 键值对**：值若是纯地址字符串，
+              统一按地址解析为对象（解析失败抛 AddressError）。
         factory_kwargs: 工厂上下文注入的键说明（{键: 说明}），
             工厂按需声明同名参数即可接收对应上下文。
         description: 槽位职责描述。
@@ -195,13 +217,20 @@ _slot(SlotSpec(
 
 _slot(SlotSpec(
     name="tools",
-    description="工具集（Agent 的「手」）。",
+    description="工具集（Agent 的「手」）。v0.9.1：列表元素与 dict "
+                "值支持纯地址加载——"
+                "tools=['myapp.tools:create'] / "
+                "tools={'my_tool': 'myapp.tools:create'} 按地址加载"
+                "工具实现（其余字符串为已注册工具名）。",
     protocol="Tool 协议（norpagent.protocols.tool.Tool）：name / schema() / run(args, ctx)。"
-             "槽位值允许：名字列表（引用注册表）、{名字: Tool} 映射、Tool 实例列表。",
+             "槽位值允许：名字列表（引用注册表，元素可为纯地址）、"
+             "{名字: Tool} 映射（值可为纯地址）、Tool 实例列表。",
     default_address=None,  # 默认逻辑 = 使用预设声明的工具集
     string_semantics="name",
     examples=[
         "np(tools=['echo', 'get_time'])                   # 只装两个工具",
+        "np(tools=['myapp.tools:create'])                 # 列表元素按地址加载",
+        "np(tools={'my_tool': 'myapp.tools:create'})      # 键值对的值按地址加载",
         "np(tools={'my_tool': MyTool()})                  # 自研工具注册并启用",
     ],
 ))
@@ -267,18 +296,24 @@ _slot(SlotSpec(
 
 _slot(SlotSpec(
     name="hooks",
-    description="钩子体系扩展：9 层 29 钩子之外的自定义订阅。",
+    description="钩子体系扩展：9 层 29 钩子之外的自定义订阅。"
+                "v0.9.1：dict 键值对的值支持纯地址解析——"
+                "{钩子名: 'pkg.mod[:attr]'} 按地址加载回调。",
     protocol="{钩子名: 回调} 映射，或 callable(registry) 返回订阅配置。",
     default_address=None,  # 默认逻辑 = 标准 9 层钩子，无额外订阅
     string_semantics="literal",
     examples=[
         "np(hooks={'before_model_call': my_guard})",
+        "np(hooks={'before_model_call': 'myapp.guard:fn'})  # 值按地址加载",
     ],
 ))
 
 _slot(SlotSpec(
     name="security",
-    description="安全系统（norpagent.safe() 的策略来源，默认钩子零干预）。",
+    description="安全系统（norpagent.safe() 的策略来源，默认钩子零干预）。"
+                "v0.9.1 地址优先：字符串形如纯地址（pkg.mod[:attr]）"
+                "按地址加载安全套件工厂，其余为级别名（basic/"
+                "standard/high）。",
     protocol="字符串级别（basic/standard/high）、配置 dict（level/hooks/config）、"
              "SecurityContext 实例、或 callable(registry) 完成安全装配。"
              "字符串与 dict 默认不挂钩子，hooks=True 才挂载钩子干预。",
@@ -287,6 +322,7 @@ _slot(SlotSpec(
     examples=[
         "np(security='high')",
         "np(security={'level': 'high', 'hooks': True})",
+        "np(security='myapp.sec:build_kit')   # 按地址加载安全套件工厂",
         "np(security=lambda reg: norpagent.safe(reg, level='standard', hooks=True))",
     ],
 ))
@@ -307,7 +343,9 @@ _slot(SlotSpec(
 _slot(SlotSpec(
     name="frontend",
     description="前端：面向用户的输入/输出外壳。前端必须高度可变——"
-                "console / headless / web / 任意自定义前端都是同一槽位。",
+                "console / headless / web / 任意自定义前端都是同一槽位。"
+                "字符串值若是 .html/.htm 文件路径，按「HTML 路径直挂」"
+                "语义装配为 WebFrontend(html=<该路径>)（v0.9）。",
     protocol=(
         "Frontend 协议（norpagent.frontends.base.Frontend）："
         "attach(engine) 绑定引擎；start() 启动（后台线程）；stop() 停止；"
@@ -322,6 +360,9 @@ _slot(SlotSpec(
         "np(frontend='myapp.my_ui:create')                             # 完全自定义",
         "np(frontend='norpagent.frontends.web:WebFrontend;html=/path/to/my.html')"
         "  # Web 前端 + 自定义主页面（槽位挂载参数，替换 / 路由页面）",
+        "np(frontend='/path/to/my.html')   # HTML 路径直挂（v0.9，等价上一行）",
+        "np(frontend='norpagent.frontends.web:WebFrontend;flow_html=/path/to/flow.html')"
+        "  # Web 前端 + 自定义模块流程页面（替换 /flow 路由页面）",
     ],
 ))
 
@@ -332,22 +373,26 @@ _slot(SlotSpec(
     protocol="UIAdapter 协议（norpagent.protocols.ui.UIAdapter）："
              "on_event / ask_user / notify。",
     default_address=None,  # 默认逻辑 = 使用预设声明的 UI 适配器
-    string_semantics="name",
+    string_semantics="name_or_address",
     examples=[
         "np(ui=MyRenderer())                              # 自定义渲染器实例",
         "np(ui='web')                                     # 已注册渲染器名",
+        "np(ui='myapp.render:create')                     # 按地址加载渲染器工厂",
     ],
 ))
 
 _slot(SlotSpec(
     name="preset",
     description="预设模式：一整套组件的开箱即用组合声明。",
-    protocol="预设名（str，需已注册）或 Preset 实例。",
+    protocol="预设名（str，需已注册）或 Preset 实例。字符串先按"
+             "注册表预设名、再按模块地址解析（地址可指向返回 "
+             "Preset 实例的工厂）。",
     default_address=None,  # 默认逻辑 = 'standard' 预设
-    string_semantics="name",
+    string_semantics="name_or_address",
     examples=[
         "np(preset='standard')                            # 标准模式",
         "np(preset='ptc')                                 # PTC 模式",
+        "np(preset='myapp.presets:build_embedded')        # 按地址加载预设工厂",
         "np(preset=Preset(name='mine', ...))               # 自定义预设",
     ],
 ))
@@ -356,34 +401,42 @@ _slot(SlotSpec(
 
 _slot(SlotSpec(
     name="logger",
-    description="日志记录器。",
+    description="日志记录器。v0.9.1 地址优先：字符串形如纯地址按地址"
+                "加载（工厂返回 logging.Logger），其余为字面值。",
     protocol="logging.Logger 协议：debug / info / warning / error。",
     default_address=None,  # 默认逻辑 = logging.getLogger('norpagent')
     string_semantics="literal",
     examples=[
         "np(logger=logging.getLogger('my.app'))",
+        "np(logger='myapp.log:get_logger')      # 按地址加载日志工厂",
     ],
 ))
 
 _slot(SlotSpec(
     name="storage",
-    description="持久化存储（会话数据库、任务状态等落盘位置）。",
+    description="持久化存储（会话数据库、任务状态等落盘位置）。"
+                "v0.9.1 地址优先：字符串形如纯地址按地址加载存储工厂，"
+                "其余（目录路径）保持字面值。",
     protocol="str（目录路径）或具备 .root / .path 属性的存储对象。",
     default_address=None,  # 默认逻辑 = ~/.norpagent
     string_semantics="literal",
     examples=[
         "np(storage='./my_data')",
+        "np(storage='myapp.store:create')     # 按地址加载存储工厂",
     ],
 ))
 
 _slot(SlotSpec(
     name="error_handler",
-    description="错误处理：任务级异常的最后防线。",
+    description="错误处理：任务级异常的最后防线。v0.9.1 地址优先："
+                "字符串形如纯地址按地址加载（地址应指向返回处理函数"
+                "的工厂，或模块级处理函数经 callable 工厂约定调用）。",
     protocol="callable(error, engine) -> None。",
     default_address=None,  # 默认逻辑 = 记录日志并置引擎状态
     string_semantics="literal",
     examples=[
         "np(error_handler=lambda exc, eng: print(exc))",
+        "np(error_handler='myapp.handlers:get_handler')  # 按地址加载处理器工厂",
     ],
 ))
 
