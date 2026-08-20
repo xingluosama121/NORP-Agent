@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 本地备份/临时产物
+_zh_backup/
+_ppt_preview/
+_venv_check/
+*.tmp
+
+# 工具生成
+.agent_history.json
+*.bak
