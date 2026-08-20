@@ -1,0 +1,20 @@
+{
+    "name": "NORP Task Board",
+    "version": "1.0.0",
+    "publisher": "norp-community",
+    "description": "多列看板任务管理：任务的增删改查与列间流转，支持 5 段 cron 定时任务；定时到点后自动把提醒注入当前会话提醒 Agent 与用户。",
+    "entry": "plugin.py",
+    "enabled": true,
+    "permissions": [
+        "file_read",
+        "file_write"
+    ],
+    "signature": {
+        "algorithm": "ed25519",
+        "public_key": "eed0f67efa7eceb9d95fd7aa8c279c4939e1fdbf81ea010338ef7e2028b20286",
+        "signature": "196abc262924f3b1ff9a257e4d85bd157aa097e5f5758381d671efe68de53193a122f8013ac4c06cbfdb6a905256b72b2cb5ea39828f50780c3e065307e6640b",
+        "signed_files": [
+            "plugin.py"
+        ]
+    }
+}

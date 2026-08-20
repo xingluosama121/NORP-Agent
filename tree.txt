@@ -1,0 +1,543 @@
+ Volume in drive H has no label.
+ Volume Serial Number is 44F1-88EC
+
+ Directory of H:\vctest\20260814
+
+2026/08/15  15:06    <DIR>          .
+2026/08/13  22:17    <DIR>          ..
+2026/08/15  11:54            30,176 agent_shared.py
+2026/08/15  11:40            53,878 api.py
+2026/08/11  11:00             1,637 app_icon.ico
+2026/08/09  18:36            13,899 archive_utils.py
+2026/08/15  11:54            61,760 async_executor.py
+2026/08/15  11:55            83,666 async_loop.py
+2026/08/15  12:11    <DIR>          build
+2026/08/10  14:04             6,141 build_front.py
+2026/08/14  21:43    <DIR>          capture_worker
+2026/08/15  11:39            12,720 config.py
+2026/08/12  17:51            21,918 context_index.py
+2026/08/13  19:24            14,127 debug_logger.py
+2026/08/15  12:35    <DIR>          dist
+2026/08/15  11:54    <DIR>          docs
+2026/08/13  23:23             7,149 error_i18n.py
+2026/08/07  10:59             9,321 event_queue.py
+2026/08/15  11:54            55,752 executor.py
+2026/08/12  18:52               681 extract_docx.py
+2026/08/13  01:12            10,361 file_io_queue.py
+2026/08/12  17:49            14,305 file_surgery.py
+2026/08/15  12:01           424,712 front.html
+2026/08/13  22:43    <DIR>          front_src
+2026/08/10  13:28            16,095 jailbreak_guard.py
+2026/08/07  10:59            16,090 lifecycle_manager.py
+2026/08/15  11:55            66,997 loop.py
+2026/08/15  12:30            36,846 main.py
+2026/08/13  22:18         4,421,476 NORP-Agent-main_updatev1.0.zip
+2026/08/15  12:35         4,674,901 NORP-Agent-src_Release1.1.zip
+2026/08/15  12:30             3,316 NORP-Agent.spec
+2026/08/09  19:45            35,280 norp_safe.py
+2026/08/15  10:43    <DIR>          official_plugins
+2026/08/07  10:59             6,538 path_mapper.py
+2026/08/07  10:59             8,886 permission_cascade.py
+2026/08/15  10:34    <DIR>          plugins
+2026/08/15  10:25    <DIR>          plugin_system
+2026/08/15  11:52            15,422 README.md
+2026/08/15  12:01               317 requirements.txt
+2026/08/07  10:59             6,891 resource_isolator.py
+2026/08/15  12:34            51,917 runtime_check.py
+2026/08/15  11:54            14,654 sandbox_pool.py
+2026/08/14  21:42               356 test_serve.bat
+2026/08/14  20:57            29,351 tools.py
+2026/08/15  15:06                 0 tree.txt
+2026/08/14  20:58             7,645 vision.py
+2026/08/14  21:36            15,599 vision_actions.py
+2026/08/14  20:55             8,074 vision_adapters.py
+2026/08/14  21:40             8,544 vision_capture.py
+2026/08/14  22:54            19,331 vision_coordinator.py
+2026/08/14  21:06             6,407 vision_ipc.py
+2026/08/14  21:01            15,883 vision_safety.py
+2026/08/12  17:50            22,144 web_fetcher_native.py
+2026/08/12  17:48            28,804 workspace_index.py
+2026/08/13  23:03               674 _analyze_backend_errors.py
+2026/08/13  23:03               356 _analyze_errors.py
+2026/08/13  23:02             1,143 _analyze_i18n.py
+2026/08/13  23:02             1,295 _analyze_used_keys.py
+2026/08/15  11:41               864 _check_front_html_js.py
+2026/08/15  10:39               498 _check_i18n_count.py
+2026/08/13  23:22             1,433 _check_i18n_keys.py
+2026/08/15  11:17             4,187 _check_js.py
+2026/08/15  11:17             1,069 _check_js_esprima.py
+2026/08/14  21:35             1,177 _debug_actions.py
+2026/08/14  21:46               483 _debug_framesource.py
+2026/08/15  10:42               530 _debug_host.py
+2026/08/15  10:42               177 _debug_host2.py
+2026/08/14  21:43             1,509 _debug_serve.py
+2026/08/14  21:47               306 _debug_shot3.py
+2026/08/15  10:44             1,657 _diag_host.py
+2026/08/15  10:44               225 _host_err.txt
+2026/08/15  10:49               223 _host_err2.txt
+2026/08/15  10:44               320 _host_input.txt
+2026/08/15  10:39            13,127 _patch_i18n.py
+2026/08/15  10:34             4,150 _sign_plugin.py
+2026/08/15  11:41             2,487 _test_approval_split.py
+2026/08/15  11:56             4,739 _test_confirm_nomore.py
+2026/08/14  21:40             1,571 _test_frame_source.py
+2026/08/15  10:43             1,401 _test_host_load.py
+2026/08/15  10:45             1,410 _test_isol2.py
+2026/08/15  10:40             3,468 _test_p0_fixes.py
+2026/08/15  10:49             1,333 _test_plugin_isolation.py
+2026/08/15  10:49             1,162 _test_rpc.py
+2026/08/14  21:36             2,841 _test_vision_actions.py
+2026/08/14  21:31             1,611 _test_vision_capture.py
+2026/08/14  22:55             7,537 _test_vision_coordinator.py
+2026/08/13  23:23             2,316 _test_vision_error.py
+2026/08/14  21:06             3,620 _test_vision_ipc.py
+2026/08/14  21:01             5,754 _test_vision_safety.py
+2026/08/14  21:37             2,399 _test_vision_sendinput.py
+2026/08/14  21:37               711 _verify_text.py
+2026/08/15  12:34    <DIR>          __pycache__
+2026/08/15  11:57            22,160 更新日志.txt
+2026/08/15  12:50    <DIR>          源码
+2026/08/14  22:56            10,990 视觉操作外挂_成果总结.txt
+              83 File(s)     10,472,880 bytes
+
+ Directory of H:\vctest\20260814\build
+
+2026/08/15  12:11    <DIR>          .
+2026/08/15  15:06    <DIR>          ..
+2026/08/15  12:35    <DIR>          NORP-Agent
+               0 File(s)              0 bytes
+
+ Directory of H:\vctest\20260814\build\NORP-Agent
+
+2026/08/15  12:35    <DIR>          .
+2026/08/15  12:11    <DIR>          ..
+2026/08/15  12:35         1,061,094 Analysis-00.toc
+2026/08/15  12:34         1,333,717 base_library.zip
+2026/08/15  12:35           171,207 EXE-00.toc
+2026/08/15  12:35    <DIR>          localpycs
+2026/08/15  12:35        43,773,699 NORP-Agent.pkg
+2026/08/15  12:35           169,549 PKG-00.toc
+2026/08/15  12:35        15,786,180 PYZ-00.pyz
+2026/08/15  12:35           867,333 PYZ-00.toc
+2026/08/15  12:35            28,050 warn-NORP-Agent.txt
+2026/08/15  12:35         7,520,668 xref-NORP-Agent.html
+               9 File(s)     70,711,497 bytes
+
+ Directory of H:\vctest\20260814\build\NORP-Agent\localpycs
+
+2026/08/15  12:35    <DIR>          .
+2026/08/15  12:35    <DIR>          ..
+2026/08/15  12:35             4,842 pyimod01_archive.pyc
+2026/08/15  12:35            32,130 pyimod02_importers.pyc
+2026/08/15  12:35             6,146 pyimod03_ctypes.pyc
+2026/08/15  12:35             1,630 pyimod04_pywin32.pyc
+2026/08/15  12:35               305 struct.pyc
+               5 File(s)         45,053 bytes
+
+ Directory of H:\vctest\20260814\capture_worker
+
+2026/08/14  21:43    <DIR>          .
+2026/08/15  15:06    <DIR>          ..
+2026/08/14  21:24             1,081 build.bat
+2026/08/14  21:50            17,162 capture_worker.cpp
+2026/08/14  21:50           288,256 capture_worker.exe
+2026/08/14  21:50         3,236,371 capture_worker.obj
+2026/08/14  21:42                35 serve_err.txt
+2026/08/14  21:42                 0 serve_test.bin
+2026/08/14  21:43         3,254,526 test_qq.bmp
+               7 File(s)      6,797,431 bytes
+
+ Directory of H:\vctest\20260814\dist
+
+2026/08/15  12:35    <DIR>          .
+2026/08/15  15:06    <DIR>          ..
+2026/08/15  12:35        44,057,859 NORP-Agent.exe
+               1 File(s)     44,057,859 bytes
+
+ Directory of H:\vctest\20260814\docs
+
+2026/08/15  11:54    <DIR>          .
+2026/08/15  15:06    <DIR>          ..
+2026/08/14  21:01            26,271 vision_agent_design.md
+2026/08/15  12:01            46,307 插件开发指南.md
+2026/08/15  11:54            37,381 视觉API开发手册.md
+               3 File(s)        109,959 bytes
+
+ Directory of H:\vctest\20260814\front_src
+
+2026/08/13  22:43    <DIR>          .
+2026/08/15  15:06    <DIR>          ..
+2026/08/15  11:55            79,294 core.js
+2026/08/15  11:56           123,523 i18n.js
+2026/08/15  12:01            51,640 index.html
+2026/08/11  10:55            14,061 main.js
+2026/08/15  11:44            45,805 styles.css
+2026/08/15  11:56            24,657 tabs.js
+2026/08/15  11:44            63,894 ui.js
+2026/08/10  14:03            19,239 wizard.js
+               8 File(s)        422,113 bytes
+
+ Directory of H:\vctest\20260814\official_plugins
+
+2026/08/15  10:43    <DIR>          .
+2026/08/15  15:06    <DIR>          ..
+2026/08/07  10:59            13,671 clipboard_manager.py
+2026/08/15  10:34               318 clipboard_manager.py.sig
+2026/08/07  10:59            52,069 code_reviewer.py
+2026/08/15  10:34               314 code_reviewer.py.sig
+2026/08/07  10:59            20,292 dev_utilities.py
+2026/08/15  10:34               314 dev_utilities.py.sig
+2026/08/07  10:59            35,121 doc_reader.py
+2026/08/15  10:34               311 doc_reader.py.sig
+2026/08/07  10:59            14,860 note_manager.py
+2026/08/15  10:34               313 note_manager.py.sig
+2026/08/07  10:59            36,828 office_writer.py
+2026/08/15  10:34               314 office_writer.py.sig
+2026/08/07  10:59            28,132 stress_tester.py
+2026/08/15  10:34               314 stress_tester.py.sig
+2026/08/07  10:59            12,046 time_tracker.py
+2026/08/15  10:34               313 time_tracker.py.sig
+2026/08/15  10:49    <DIR>          __pycache__
+              16 File(s)        215,530 bytes
+
+ Directory of H:\vctest\20260814\official_plugins\__pycache__
+
+2026/08/15  10:49    <DIR>          .
+2026/08/15  10:43    <DIR>          ..
+2026/08/15  10:49            14,178 clipboard_manager.cpython-312.pyc
+2026/08/15  10:49            42,419 code_reviewer.cpython-312.pyc
+2026/08/15  10:43            22,656 dev_utilities.cpython-312.pyc
+2026/08/15  10:49            32,540 doc_reader.cpython-312.pyc
+2026/08/15  10:49            16,912 note_manager.cpython-312.pyc
+2026/08/15  10:49            33,989 office_writer.cpython-312.pyc
+2026/08/15  10:49            29,687 stress_tester.cpython-312.pyc
+2026/08/15  10:49            13,857 time_tracker.cpython-312.pyc
+               8 File(s)        206,238 bytes
+
+ Directory of H:\vctest\20260814\plugins
+
+2026/08/15  10:34    <DIR>          .
+2026/08/15  15:06    <DIR>          ..
+2026/08/12  18:52             4,812 example_notifier.py
+2026/08/15  10:34               317 example_notifier.py.sig
+2026/08/15  10:34    <DIR>          norp_pet_bridge
+2026/08/12  18:52            11,976 session_stats.py
+2026/08/15  10:34               314 session_stats.py.sig
+2026/08/12  18:52            14,143 task_logger.py
+2026/08/15  10:34               312 task_logger.py.sig
+2026/08/12  18:52               558 __init__.py
+               7 File(s)         32,432 bytes
+
+ Directory of H:\vctest\20260814\plugins\norp_pet_bridge
+
+2026/08/15  10:34    <DIR>          .
+2026/08/15  10:34    <DIR>          ..
+2026/08/12  18:52             5,226 embedded.py
+2026/08/12  18:52               380 manifest.json
+2026/08/13  22:19    <DIR>          pet_core
+2026/08/12  18:52            16,722 plugin.py
+2026/08/15  10:34               307 plugin.py.sig
+2026/08/12  18:52             5,692 README.md
+2026/08/12  18:52             2,827 _test_embedded.py
+2026/08/12  18:52             2,130 _test_plugin_load.py
+               7 File(s)         33,284 bytes
+
+ Directory of H:\vctest\20260814\plugins\norp_pet_bridge\pet_core
+
+2026/08/13  22:19    <DIR>          .
+2026/08/15  10:34    <DIR>          ..
+2026/08/12  18:52            12,744 alpha_render.py
+2026/08/13  22:19    <DIR>          assets
+2026/08/12  18:52           136,099 pet.py
+2026/08/12  18:52                 5 __init__.py
+               3 File(s)        148,848 bytes
+
+ Directory of H:\vctest\20260814\plugins\norp_pet_bridge\pet_core\assets
+
+2026/08/13  22:19    <DIR>          .
+2026/08/13  22:19    <DIR>          ..
+2026/08/12  18:52             4,814 icon_coin.png
+2026/08/12  18:52             6,999 icon_cola.png
+2026/08/12  18:52             4,015 icon_mood.png
+2026/08/12  18:52             5,266 icon_riceball.png
+2026/08/12  18:52             5,975 icon_satiety.png
+2026/08/12  18:52           184,182 优香_0.png
+2026/08/12  18:52           180,158 优香_00.png
+2026/08/12  18:52            56,151 优香_1.png
+2026/08/12  18:52           262,895 优香_10.png
+2026/08/12  18:52           216,931 优香_11.png
+2026/08/12  18:52           208,431 优香_12.png
+2026/08/12  18:52           212,059 优香_13.png
+2026/08/12  18:52           211,345 优香_14.png
+2026/08/12  18:52           175,264 优香_15t拖拽.png
+2026/08/12  18:52           161,139 优香_16_sleep.png
+2026/08/12  18:52           162,873 优香_17_eat.png
+2026/08/12  18:52           187,164 优香_18_hi.png
+2026/08/12  18:52           184,881 优香_19momotou.png
+2026/08/12  18:52            55,701 优香_2.png
+2026/08/12  18:52            56,986 优香_3.png
+2026/08/12  18:52            56,182 优香_4.png
+2026/08/12  18:52            56,780 优香_5.png
+2026/08/12  18:52           180,291 优香_5_zhengjing.png
+2026/08/12  18:52            56,923 优香_6.png
+2026/08/12  18:52           187,841 优香_6_sad.png
+2026/08/12  18:52           180,137 优香_6_wuyu.png
+2026/08/12  18:52           196,085 优香_7.png
+2026/08/12  18:52           214,474 优香_8.png
+2026/08/12  18:52           220,469 优香_9.png
+2026/08/12  18:52           159,056 优香_休息一下.png
+              30 File(s)      4,051,467 bytes
+
+ Directory of H:\vctest\20260814\plugin_system
+
+2026/08/15  10:25    <DIR>          .
+2026/08/15  15:06    <DIR>          ..
+2026/08/15  11:39             5,101 approval.py
+2026/08/07  10:59             2,929 context.py
+2026/08/15  10:30            43,997 manager.py
+2026/08/15  10:23             6,658 network_policy.py
+2026/08/15  12:30            20,193 plugin_host.py
+2026/08/15  10:27            32,708 security.py
+2026/08/15  10:23            11,017 signature.py
+2026/08/15  10:30               923 __init__.py
+2026/08/15  12:30    <DIR>          __pycache__
+               8 File(s)        123,526 bytes
+
+ Directory of H:\vctest\20260814\plugin_system\__pycache__
+
+2026/08/15  12:30    <DIR>          .
+2026/08/15  10:25    <DIR>          ..
+2026/08/15  11:40             5,244 approval.cpython-312.pyc
+2026/08/15  10:51             4,241 context.cpython-312.pyc
+2026/08/15  10:51            52,302 manager.cpython-312.pyc
+2026/08/15  10:51             7,551 network_policy.cpython-312.pyc
+2026/08/15  12:30            23,733 plugin_host.cpython-312.pyc
+2026/08/15  10:51            35,398 security.cpython-312.pyc
+2026/08/15  10:51            11,891 signature.cpython-312.pyc
+2026/08/15  10:51             1,023 __init__.cpython-312.pyc
+               8 File(s)        141,383 bytes
+
+ Directory of H:\vctest\20260814\__pycache__
+
+2026/08/15  12:34    <DIR>          .
+2026/08/15  15:06    <DIR>          ..
+2026/08/15  11:56            29,051 agent_shared.cpython-312.pyc
+2026/08/15  11:56            59,890 api.cpython-312.pyc
+2026/08/15  11:56            86,826 async_executor.cpython-312.pyc
+2026/08/15  11:56            75,698 async_loop.cpython-312.pyc
+2026/08/15  11:56            10,843 config.cpython-312.pyc
+2026/08/13  22:43            25,489 context_index.cpython-312.pyc
+2026/08/13  22:43            14,970 debug_logger.cpython-312.pyc
+2026/08/13  23:24             7,366 error_i18n.cpython-312.pyc
+2026/08/13  22:43            12,204 event_queue.cpython-312.pyc
+2026/08/15  11:56            71,554 executor.cpython-312.pyc
+2026/08/13  22:43            13,892 file_io_queue.cpython-312.pyc
+2026/08/13  22:43            16,077 file_surgery.cpython-312.pyc
+2026/08/13  22:43            13,956 jailbreak_guard.cpython-312.pyc
+2026/08/15  10:51            23,212 lifecycle_manager.cpython-312.pyc
+2026/08/15  11:56            62,425 loop.cpython-312.pyc
+2026/08/15  12:30            34,578 main.cpython-312.pyc
+2026/08/15  10:51            33,299 norp_safe.cpython-312.pyc
+2026/08/13  22:43             9,157 path_mapper.cpython-312.pyc
+2026/08/15  10:51            11,911 permission_cascade.cpython-312.pyc
+2026/08/13  22:43             9,568 resource_isolator.cpython-312.pyc
+2026/08/15  12:34            47,839 runtime_check.cpython-312.pyc
+2026/08/15  11:56            20,666 sandbox_pool.cpython-312.pyc
+2026/08/14  20:58            20,575 tools.cpython-312.pyc
+2026/08/14  20:58             8,542 vision.cpython-312.pyc
+2026/08/14  21:37            17,557 vision_actions.cpython-312.pyc
+2026/08/14  20:58             9,987 vision_adapters.cpython-312.pyc
+2026/08/14  21:40            11,650 vision_capture.cpython-312.pyc
+2026/08/14  22:55            22,432 vision_coordinator.cpython-312.pyc
+2026/08/14  21:06             7,727 vision_ipc.cpython-312.pyc
+2026/08/14  21:06            14,426 vision_safety.cpython-312.pyc
+2026/08/13  22:43            25,855 web_fetcher_native.cpython-312.pyc
+2026/08/13  22:43            34,802 workspace_index.cpython-312.pyc
+2026/08/15  10:51             6,846 _sign_plugin.cpython-312.pyc
+              33 File(s)        870,870 bytes
+
+ Directory of H:\vctest\20260814\源码
+
+2026/08/15  12:50    <DIR>          .
+2026/08/15  15:06    <DIR>          ..
+2026/08/15  11:54            30,176 agent_shared.py
+2026/08/15  11:40            53,878 api.py
+2026/08/11  11:00             1,637 app_icon.ico
+2026/08/09  18:36            13,899 archive_utils.py
+2026/08/15  11:54            61,760 async_executor.py
+2026/08/15  11:55            83,666 async_loop.py
+2026/08/10  14:04             6,141 build_front.py
+2026/08/15  12:50    <DIR>          capture_worker
+2026/08/15  11:39            12,720 config.py
+2026/08/12  17:51            21,918 context_index.py
+2026/08/13  19:24            14,127 debug_logger.py
+2026/08/15  12:50    <DIR>          docs
+2026/08/13  23:23             7,149 error_i18n.py
+2026/08/07  10:59             9,321 event_queue.py
+2026/08/15  11:54            55,752 executor.py
+2026/08/12  18:52               681 extract_docx.py
+2026/08/13  01:12            10,361 file_io_queue.py
+2026/08/12  17:49            14,305 file_surgery.py
+2026/08/15  12:01           424,712 front.html
+2026/08/15  12:50    <DIR>          front_src
+2026/08/10  13:28            16,095 jailbreak_guard.py
+2026/08/07  10:59            16,090 lifecycle_manager.py
+2026/08/15  11:55            66,997 loop.py
+2026/08/15  12:30            36,846 main.py
+2026/08/15  12:30             3,316 NORP-Agent.spec
+2026/08/09  19:45            35,280 norp_safe.py
+2026/08/15  12:50    <DIR>          official_plugins
+2026/08/07  10:59             6,538 path_mapper.py
+2026/08/07  10:59             8,886 permission_cascade.py
+2026/08/15  12:51    <DIR>          plugins
+2026/08/15  12:50    <DIR>          plugin_system
+2026/08/15  11:52            15,422 README.md
+2026/08/15  12:01               317 requirements.txt
+2026/08/07  10:59             6,891 resource_isolator.py
+2026/08/15  12:34            51,917 runtime_check.py
+2026/08/15  11:54            14,654 sandbox_pool.py
+2026/08/14  21:42               356 test_serve.bat
+2026/08/14  20:57            29,351 tools.py
+2026/08/14  20:58             7,645 vision.py
+2026/08/14  21:36            15,599 vision_actions.py
+2026/08/14  20:55             8,074 vision_adapters.py
+2026/08/14  21:40             8,544 vision_capture.py
+2026/08/14  22:54            19,331 vision_coordinator.py
+2026/08/14  21:06             6,407 vision_ipc.py
+2026/08/14  21:01            15,883 vision_safety.py
+2026/08/12  17:50            22,144 web_fetcher_native.py
+2026/08/12  17:48            28,804 workspace_index.py
+              41 File(s)      1,263,590 bytes
+
+ Directory of H:\vctest\20260814\源码\capture_worker
+
+2026/08/15  12:50    <DIR>          .
+2026/08/15  12:50    <DIR>          ..
+2026/08/14  21:24             1,081 build.bat
+2026/08/14  21:50            17,162 capture_worker.cpp
+               2 File(s)         18,243 bytes
+
+ Directory of H:\vctest\20260814\源码\docs
+
+2026/08/15  12:50    <DIR>          .
+2026/08/15  12:50    <DIR>          ..
+2026/08/14  21:01            26,271 vision_agent_design.md
+2026/08/15  12:01            46,307 插件开发指南.md
+2026/08/15  11:54            37,381 视觉API开发手册.md
+               3 File(s)        109,959 bytes
+
+ Directory of H:\vctest\20260814\源码\front_src
+
+2026/08/15  12:50    <DIR>          .
+2026/08/15  12:50    <DIR>          ..
+2026/08/15  11:55            79,294 core.js
+2026/08/15  11:56           123,523 i18n.js
+2026/08/15  12:01            51,640 index.html
+2026/08/11  10:55            14,061 main.js
+2026/08/15  11:44            45,805 styles.css
+2026/08/15  11:56            24,657 tabs.js
+2026/08/15  11:44            63,894 ui.js
+2026/08/10  14:03            19,239 wizard.js
+               8 File(s)        422,113 bytes
+
+ Directory of H:\vctest\20260814\源码\official_plugins
+
+2026/08/15  12:50    <DIR>          .
+2026/08/15  12:50    <DIR>          ..
+2026/08/07  10:59            13,671 clipboard_manager.py
+2026/08/07  10:59            52,069 code_reviewer.py
+2026/08/07  10:59            20,292 dev_utilities.py
+2026/08/07  10:59            35,121 doc_reader.py
+2026/08/07  10:59            14,860 note_manager.py
+2026/08/07  10:59            36,828 office_writer.py
+2026/08/07  10:59            28,132 stress_tester.py
+2026/08/07  10:59            12,046 time_tracker.py
+               8 File(s)        213,019 bytes
+
+ Directory of H:\vctest\20260814\源码\plugins
+
+2026/08/15  12:51    <DIR>          .
+2026/08/15  12:50    <DIR>          ..
+2026/08/12  18:52             4,812 example_notifier.py
+2026/08/15  12:51    <DIR>          norp_pet_bridge
+2026/08/12  18:52            11,976 session_stats.py
+2026/08/12  18:52            14,143 task_logger.py
+2026/08/12  18:52               558 __init__.py
+               4 File(s)         31,489 bytes
+
+ Directory of H:\vctest\20260814\源码\plugins\norp_pet_bridge
+
+2026/08/15  12:51    <DIR>          .
+2026/08/15  12:51    <DIR>          ..
+2026/08/12  18:52             5,226 embedded.py
+2026/08/12  18:52               380 manifest.json
+2026/08/15  12:50    <DIR>          pet_core
+2026/08/12  18:52            16,722 plugin.py
+2026/08/12  18:52             5,692 README.md
+2026/08/12  18:52             2,827 _test_embedded.py
+2026/08/12  18:52             2,130 _test_plugin_load.py
+               6 File(s)         32,977 bytes
+
+ Directory of H:\vctest\20260814\源码\plugins\norp_pet_bridge\pet_core
+
+2026/08/15  12:50    <DIR>          .
+2026/08/15  12:51    <DIR>          ..
+2026/08/12  18:52            12,744 alpha_render.py
+2026/08/15  12:50    <DIR>          assets
+2026/08/12  18:52           136,099 pet.py
+2026/08/12  18:52                 5 __init__.py
+               3 File(s)        148,848 bytes
+
+ Directory of H:\vctest\20260814\源码\plugins\norp_pet_bridge\pet_core\assets
+
+2026/08/15  12:50    <DIR>          .
+2026/08/15  12:50    <DIR>          ..
+2026/08/12  18:52             4,814 icon_coin.png
+2026/08/12  18:52             6,999 icon_cola.png
+2026/08/12  18:52             4,015 icon_mood.png
+2026/08/12  18:52             5,266 icon_riceball.png
+2026/08/12  18:52             5,975 icon_satiety.png
+2026/08/12  18:52           184,182 优香_0.png
+2026/08/12  18:52           180,158 优香_00.png
+2026/08/12  18:52            56,151 优香_1.png
+2026/08/12  18:52           262,895 优香_10.png
+2026/08/12  18:52           216,931 优香_11.png
+2026/08/12  18:52           208,431 优香_12.png
+2026/08/12  18:52           212,059 优香_13.png
+2026/08/12  18:52           211,345 优香_14.png
+2026/08/12  18:52           175,264 优香_15t拖拽.png
+2026/08/12  18:52           161,139 优香_16_sleep.png
+2026/08/12  18:52           162,873 优香_17_eat.png
+2026/08/12  18:52           187,164 优香_18_hi.png
+2026/08/12  18:52           184,881 优香_19momotou.png
+2026/08/12  18:52            55,701 优香_2.png
+2026/08/12  18:52            56,986 优香_3.png
+2026/08/12  18:52            56,182 优香_4.png
+2026/08/12  18:52            56,780 优香_5.png
+2026/08/12  18:52           180,291 优香_5_zhengjing.png
+2026/08/12  18:52            56,923 优香_6.png
+2026/08/12  18:52           187,841 优香_6_sad.png
+2026/08/12  18:52           180,137 优香_6_wuyu.png
+2026/08/12  18:52           196,085 优香_7.png
+2026/08/12  18:52           214,474 优香_8.png
+2026/08/12  18:52           220,469 优香_9.png
+2026/08/12  18:52           159,056 优香_休息一下.png
+              30 File(s)      4,051,467 bytes
+
+ Directory of H:\vctest\20260814\源码\plugin_system
+
+2026/08/15  12:50    <DIR>          .
+2026/08/15  12:50    <DIR>          ..
+2026/08/15  11:39             5,101 approval.py
+2026/08/07  10:59             2,929 context.py
+2026/08/15  10:30            43,997 manager.py
+2026/08/15  10:23             6,658 network_policy.py
+2026/08/15  12:30            20,193 plugin_host.py
+2026/08/15  10:27            32,708 security.py
+2026/08/15  10:23            11,017 signature.py
+2026/08/15  10:30               923 __init__.py
+               8 File(s)        123,526 bytes
+
+     Total Files Listed:
+             349 File(s)    144,855,601 bytes
+              80 Dir(s)  141,695,074,304 bytes free

@@ -1,0 +1,21 @@
+{
+    "name": "NORP Git",
+    "version": "1.0.0",
+    "publisher": "norp-community",
+    "description": "Git 版本控制与提交图：状态/日志/提交图/差异/分支/暂存/提交/检出/推拉/概览，对齐 dsh-git-graph 与 dsh-aionui-panel 的 SCM 面板能力。",
+    "entry": "plugin.py",
+    "enabled": true,
+    "permissions": [
+        "process",
+        "file_read",
+        "file_write"
+    ],
+    "signature": {
+        "algorithm": "ed25519",
+        "public_key": "eed0f67efa7eceb9d95fd7aa8c279c4939e1fdbf81ea010338ef7e2028b20286",
+        "signature": "76ade3913945bdc91b7e4392783c78342e61bca0b6af8dcc965a4101ce46001ab3b689a1fc792668f23ebfa80c638bf002f4019174779aca1d7795445d025d01",
+        "signed_files": [
+            "plugin.py"
+        ]
+    }
+}

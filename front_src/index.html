@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<!-- Copyright (c) 2026 xingluosama -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NORP Agent</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ── Loading Overlay ── -->
+<div id="loading-overlay">
+    <div>
+        <div class="loading-spinner"></div>
+        <!-- Error icon (red circle + exclamation) -->
+        <svg class="loading-error-icon" width="48" height="48" viewBox="0 0 48 48" fill="none">
+            <circle cx="24" cy="24" r="22" stroke="#d32f2f" stroke-width="3"/>
+            <path d="M24 14v14" stroke="#d32f2f" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="24" cy="32" r="1.5" fill="#d32f2f"/>
+        </svg>
+        <!-- Done icon (green circle + checkmark) -->
+        <svg class="loading-done-icon" width="48" height="48" viewBox="0 0 48 48" fill="none">
+            <circle cx="24" cy="24" r="22" stroke="#2e7d32" stroke-width="3"/>
+            <path d="M14 24l7 7 13-14" stroke="#2e7d32" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p><span id="loadingStatusText" data-i18n="loading">加载中...</span><span class="loading-fatal-badge" id="loadingFatalBadge"></span></p>
+        <div class="loading-progress" id="loadingProgress"></div>
+        <div class="loading-error-details" id="loadingErrorDetails"></div>
+        <button class="loading-exit-btn" id="loadingExitBtn" data-i18n="loading_exit" onclick="if(window.pywebview&&window.pywebview.api)window.pywebview.api.quit_app();else window.close();">退出程序</button>
+    </div>
+</div>
+
+<div id="wizard-overlay">
+    <canvas id="wiz-particles"></canvas>
+
+    <div id="wiz-skip-btn" title="Skip onboarding">Skip ▶</div>
+
+    <div id="wiz-skip-dialog">
+        <div class="wiz-dlg">
+            <h3 data-i18n="wizard_skip_title">Skip Setup?</h3>
+            <p data-i18n="wizard_skip_desc">You can configure your API key and settings later from the Settings panel.</p>
+            <div class="wiz-dlg-btn-row">
+                <button class="wiz-btn-back" id="wiz-skip-cancel" data-i18n="wizard_skip_cancel">Cancel</button>
+                <button class="wiz-btn-next" id="wiz-skip-confirm" data-i18n="wizard_skip_confirm">Skip</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="wiz-center-wrapper">
+        <div id="wiz-step-indicator">
+            <span class="wiz-step-dot active" data-step="0"></span>
+            <span class="wiz-step-line" data-line="0"></span>
+            <span class="wiz-step-dot" data-step="1"></span>
+            <span class="wiz-step-line" data-line="1"></span>
+            <span class="wiz-step-dot" data-step="2"></span>
+            <span class="wiz-step-line" data-line="2"></span>
+            <span class="wiz-step-dot" data-step="3"></span>
+            <span class="wiz-step-line" data-line="3"></span>
+            <span class="wiz-step-dot" data-step="4"></span>
+            <span class="wiz-step-line" data-line="4"></span>
+            <span class="wiz-step-dot" data-step="5"></span>
+        </div>
+
+        <div id="wiz-card-container">
+
+            <div class="wiz-card active" data-card="0">
+                <span class="wiz-icon">⚡</span>
+                <h2 data-i18n="wizard_welcome">Welcome to NORP Agent</h2>
+                <p class="wiz-subtitle" data-i18n="wizard_subtitle">Your autonomous AI coding companion. Let's get you set up in just a few steps.</p>
+
+                <label data-i18n="language_label">🌐 Interface Language / Language</label>
+                <select id="wiz-language">
+                    <option value="zh_CN">简体中文 (Simplified Chinese)</option>
+                    <option value="zh_TW">繁體中文 (Traditional Chinese)</option>
+                    <option value="en">English</option>
+                    <option value="ru">Русский (Russian)</option>
+                    <option value="ja">日本語 (Japanese)</option>
+                </select>
+
+                <div class="wiz-btn-row">
+                    <span></span>
+                    <button class="wiz-btn-next" id="wiz-step0-next" data-i18n="wizard_get_started">Get Started →</button>
+                </div>
+            </div>
+
+            <div class="wiz-card" data-card="1">
+                <span class="wiz-icon">🔑</span>
+                <h2 data-i18n="wizard_api_config">API Configuration</h2>
+                <p class="wiz-subtitle" data-i18n="wizard_api_config_desc">Enter your API key and base URL to connect to the AI service.</p>
+
+                <label data-i18n="wizard_api_base">API Base URL</label>
+                <input type="text" id="wiz-api-base" value="https://api.deepseek.com" placeholder="https://api.deepseek.com">
+
+                <label><span data-i18n="wizard_api_key">API Key</span> <span class="wiz-required">*</span></label>
+                <div class="wiz-row">
+                    <input type="password" id="wiz-apikey" placeholder="sk-..." autocomplete="off">
+                    <button class="wiz-btn-small" id="wiz-getkey" data-i18n="get_key">Get Key</button>
+                </div>
+                <div class="wiz-row" style="margin-top:8px;">
+                    <button class="wiz-btn-small" id="wiz-verify-key" style="flex:1;text-align:center;" data-i18n="wizard_verify">🔍 Verify Key</button>
+                </div>
+                <div class="wiz-status info" id="wiz-key-status"></div>
+
+                <div class="wiz-btn-row">
+                    <button class="wiz-btn-back" id="wiz-step1-back" data-i18n="wizard_back">← Back</button>
+                    <button class="wiz-btn-next" id="wiz-step1-next" data-i18n="wizard_get_started">Continue →</button>
+                </div>
+            </div>
+
+            <div class="wiz-card" data-card="2">
+                <span class="wiz-icon">🧠</span>
+                <h2 data-i18n="wizard_basic_config">Model &amp; Workspace</h2>
+                <p class="wiz-subtitle" data-i18n="wizard_basic_config_desc">Pick the model that powers your agent, and choose the workspace it operates in.</p>
+
+                <label data-i18n="wizard_model">Model</label>
+                <select id="wiz-model">
+                    <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                    <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                </select>
+
+                <label data-i18n="wizard_project_root">Project Root</label>
+                <div class="wiz-row">
+                    <input type="text" id="wiz-project-root" placeholder="Select workspace directory...">
+                    <button class="wiz-btn-small" id="wiz-browse" data-i18n="browse">Browse</button>
+                </div>
+
+                <div class="wiz-btn-row">
+                    <button class="wiz-btn-back" id="wiz-step2-back" data-i18n="wizard_back">← Back</button>
+                    <button class="wiz-btn-next" id="wiz-step2-next" data-i18n="wizard_get_started">Continue →</button>
+                </div>
+            </div>
+
+            <div class="wiz-card" data-card="3">
+                <span class="wiz-icon">🛡️</span>
+                <h2 data-i18n="settings_title">Behavior &amp; Safety</h2>
+                <p class="wiz-subtitle" data-i18n="wizard_confirm_write_desc">Decide how the agent behaves and how cautious it is with your files.</p>
+
+                <div class="wiz-checkbox-row" style="margin-top:14px;">
+                    <input type="checkbox" id="wiz-web-search">
+                    <label for="wiz-web-search" data-i18n="wizard_web_search">Enable Web Search</label>
+                </div>
+                <div class="wiz-checkbox-desc" data-i18n="wizard_web_search_desc">Allow the Agent to search the web for real-time information.</div>
+
+                <div class="wiz-checkbox-row">
+                    <input type="checkbox" id="wiz-confirm-write" checked>
+                    <label for="wiz-confirm-write" data-i18n="wizard_confirm_write">Confirm Before Write/Delete</label>
+                </div>
+                <div class="wiz-checkbox-desc" data-i18n="wizard_confirm_write_desc">Prompt a confirmation dialog before writing or deleting files.</div>
+
+                <div class="wiz-btn-row">
+                    <button class="wiz-btn-back" id="wiz-step3-back" data-i18n="wizard_back">← Back</button>
+                    <button class="wiz-btn-next" id="wiz-step3-next" data-i18n="wizard_get_started">Continue →</button>
+                </div>
+            </div>
+
+            <div class="wiz-card" data-card="4">
+                <span class="wiz-icon">⚡</span>
+                <h2 data-i18n="settings_title">Performance &amp; Limits</h2>
+                <p class="wiz-subtitle" data-i18n="wizard_confirm_write_desc">Tune how long the agent may run and how much work it can queue up.</p>
+
+                <label data-i18n="wizard_queue_size">Event Queue Limit</label>
+                <input type="number" id="wiz-queue-size" min="1" max="1024" value="200">
+
+                <label data-i18n="wizard_max_steps">Max Steps</label>
+                <input type="number" id="wiz-max-steps" min="1" max="512" value="128">
+
+                <label data-i18n="wizard_task_timeout">Task Timeout (seconds, 0 = disable)</label>
+                <input type="number" id="wiz-task-timeout" min="0" max="3600" step="30" value="0">
+
+                <div class="wiz-btn-row">
+                    <button class="wiz-btn-back" id="wiz-step4-back" data-i18n="wizard_back">← Back</button>
+                    <button class="wiz-btn-next" id="wiz-step4-next" data-i18n="wizard_get_started">Continue →</button>
+                </div>
+            </div>
+
+            <div class="wiz-card" data-card="5">
+                <span class="wiz-icon">🚀</span>
+                <h2 data-i18n="wizard_ready">Ready to Go</h2>
+                <p class="wiz-subtitle" data-i18n="wizard_ready_desc">Review your settings below, then start using the agent.</p>
+
+                <div class="wiz-summary-item"><span class="wiz-sum-key" data-i18n="wizard_summary_base">API Base URL</span><span class="wiz-sum-val" id="wiz-sum-base">-</span></div>
+                <div class="wiz-summary-item"><span class="wiz-sum-key" data-i18n="wizard_summary_key">API Key</span><span class="wiz-sum-val" id="wiz-sum-key">********</span></div>
+                <div class="wiz-summary-item"><span class="wiz-sum-key" data-i18n="wizard_summary_model">Model</span><span class="wiz-sum-val" id="wiz-sum-model">-</span></div>
+                <div class="wiz-summary-item"><span class="wiz-sum-key" data-i18n="wizard_summary_root">Project Root</span><span class="wiz-sum-val" id="wiz-sum-root">-</span></div>
+                <div class="wiz-summary-item"><span class="wiz-sum-key" data-i18n="wizard_summary_web_search">Web Search</span><span class="wiz-sum-val" id="wiz-sum-web-search">Off</span></div>
+                <div class="wiz-summary-item"><span class="wiz-sum-key" data-i18n="wizard_summary_confirm">Confirm Write/Delete</span><span class="wiz-sum-val" id="wiz-sum-confirm-write">On</span></div>
+                <div class="wiz-summary-item"><span class="wiz-sum-key" data-i18n="wizard_summary_queue">Queue Limit</span><span class="wiz-sum-val" id="wiz-sum-queue-size">200</span></div>
+                <div class="wiz-summary-item"><span class="wiz-sum-key" data-i18n="wizard_summary_steps">Max Steps</span><span class="wiz-sum-val" id="wiz-sum-max-steps">128</span></div>
+                <div class="wiz-summary-item"><span class="wiz-sum-key" data-i18n="wizard_summary_timeout">Task Timeout</span><span class="wiz-sum-val" id="wiz-sum-task-timeout">0s (disabled)</span></div>
+
+                <div class="wiz-btn-row">
+                    <button class="wiz-btn-back" id="wiz-step5-back" data-i18n="wizard_back">← Back</button>
+                    <button class="wiz-btn-finish" id="wiz-finish-btn" data-i18n="wizard_start">Start Using ✨</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<div id="header">
+    <div class="header-left">
+        <h1 data-i18n="app_title">NORP Agent</h1>
+        <span class="header-token-display" id="header-tokens"></span>
+    </div>
+    <div class="btn-group">
+        <button id="msg-center-btn" data-i18n="messages">📨 消息<span id="msg-center-badge"></span></button>
+        <button id="plugins-btn" data-i18n="plugins_panel_btn">🔌 插件</button>
+        <button id="about-btn" data-i18n="about">About</button>
+        <button id="balance-btn" data-i18n="balance">Balance</button>
+        <button id="key-btn" data-i18n="key">Key</button>
+        <button id="settings-btn" data-i18n="settings">Settings</button>
+        <button id="stop-btn" class="btn-stop" data-i18n="stop">Stop</button>
+    </div>
+</div>
+
+<!-- NORP 安全系统关闭警告条（顶部常驻） -->
+<div id="norp-safety-warning-bar" style="display:none;background:#b71c1c;color:#fff;text-align:center;padding:8px 16px;font-size:13px;font-weight:700;letter-spacing:0.5px;box-shadow:0 2px 8px rgba(183,28,28,0.3);z-index:100;position:relative;" data-i18n="norp_safety_warning_bar">⛔ 安全系统已关闭 — 智能体行为不再受保护</div>
+
+<div id="tab-bar">
+    <div id="tab-list"></div>
+    <button id="new-tab-btn" title="New Tab (Ctrl+T)">+</button>
+</div>
+
+<div class="panels" id="panels-container">
+    <div class="chat-panel" id="chat-panel-default">
+        <div class="panel-title" data-i18n="chat">Chat</div>
+        <div class="panel-content" id="chat-content-default"></div>
+    </div>
+    <div class="cmd-panel" id="cmd-panel-default">
+        <div class="panel-title" data-i18n="commands">Commands</div>
+        <div class="panel-content" id="cmd-content-default"></div>
+    </div>
+</div>
+
+<div class="panels" id="panels-template" style="display:none;">
+    <div class="chat-panel" id="chat-panel-template">
+        <div class="panel-title" data-i18n="chat">Chat</div>
+        <div class="panel-content" id="chat-content-template"></div>
+    </div>
+    <div class="cmd-panel" id="cmd-panel-template">
+        <div class="panel-title" data-i18n="commands">Commands</div>
+        <div class="panel-content" id="cmd-content-template"></div>
+    </div>
+</div>
+
+<div class="input-area">
+    <textarea id="user-input" data-i18n-placeholder="input_placeholder" placeholder="Enter to send, Ctrl+Enter for newline. Drag & drop files here..." rows="1"></textarea>
+    <div id="file-badges"></div>
+    <button class="btn-send" id="send-btn" data-i18n="send">Send</button>
+</div>
+
+<div id="status-bar">
+    <div class="status-left">
+        <span id="status-text">Ready</span>
+        <span id="workspace-display" style="color:#888;font-size:10px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+    </div>
+    <div class="token-info" id="token-display"></div>
+</div>
+
+<div id="toast-container"></div>
+
+<div id="norp-notification-container"></div>
+
+<div id="ask-user-modal" class="modal">
+    <div class="modal-content">
+        <h2>🤖 Agent Question</h2>
+        <div id="ask-user-question"></div>
+        <label for="ask-user-reply-input">Your Reply</label>
+        <textarea id="ask-user-reply-input" placeholder="Type your reply... (Enter to send, Ctrl+Enter for newline)"></textarea>
+        <p id="ask-user-reply-hint">Enter ↵ to reply &nbsp;|&nbsp; Ctrl+Enter for newline &nbsp;|&nbsp; Esc to cancel task</p>
+        <div class="btn-row btn-row-between">
+            <button class="btn-danger" id="ask-user-cancel-btn">Cancel Task</button>
+            <button class="btn-primary" id="ask-user-reply-btn">Reply</button>
+        </div>
+    </div>
+</div>
+
+<div id="confirm-write-modal" class="modal">
+    <div class="modal-content">
+        <div id="confirm-write-icon">⚠️</div>
+        <h2 id="confirm-write-title">Confirm Operation</h2>
+        <p id="confirm-write-message"></p>
+        <p id="confirm-write-detail"></p>
+        <p id="confirm-write-nomore-hint" style="font-size:12px;color:#888;margin:6px 0 0 0;display:none;" data-i18n="confirm_no_more_hint"></p>
+        <div class="btn-row" style="justify-content:center;gap:16px;">
+            <button class="btn-danger" id="confirm-write-cancel-btn" data-i18n="cancel">Cancel</button>
+            <button class="btn-secondary" id="confirm-write-nomore-btn" style="display:none;" data-i18n="confirm_no_more">Don't ask again</button>
+            <button class="btn-primary" id="confirm-write-confirm-btn" data-i18n="confirm_btn">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<div id="settings-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-body">
+        <h2 data-i18n="settings_title">Settings</h2>
+
+        <!-- Language selector — placed at the very top -->
+        <label data-i18n="language_label">🌐 Interface Language / Language</label>
+        <select id="cfg-language" style="margin-bottom:12px;">
+            <option value="zh_CN">简体中文 (Simplified Chinese)</option>
+            <option value="zh_TW">繁體中文 (Traditional Chinese)</option>
+            <option value="en">English</option>
+            <option value="ru">Русский (Russian)</option>
+            <option value="ja">日本語 (Japanese)</option>
+        </select>
+
+        <!-- 关闭按钮默认行为 -->
+        <label data-i18n="close_behavior_label">🪟 关闭按钮默认行为</label>
+        <select id="cfg-close-behavior" style="margin-bottom:12px;">
+            <option value="minimize_to_tray" data-i18n="close_behavior_tray">最小化到任务栏托盘</option>
+            <option value="exit" data-i18n="close_behavior_exit">直接退出程序</option>
+        </select>
+
+        <label data-i18n="model_label">Model</label>
+        <select id="cfg-model"></select>
+
+        <div class="checkbox-row">
+            <input type="checkbox" id="cfg-use-responses">
+            <label for="cfg-use-responses">启用 Responses API（原生）</label>
+        </div>
+        <div class="checkbox-desc">仅 OpenAI 端点支持</div>
+
+        <label>API Base URL</label>
+        <div class="flex-row">
+            <input type="text" id="cfg-api-base" placeholder="https://api.deepseek.com" style="flex:1;">
+            <button class="btn-small" id="cfg-refresh-models">Refresh</button>
+        </div>
+        <span id="cfg-models-status" style="font-size:11px; color:#888;"></span>
+
+        <label data-i18n="reasoning_section" style="margin-top:12px;">🧠 Reasoning & Temperature</label>
+        <label data-i18n="reasoning_effort">Reasoning Effort</label>
+        <select id="cfg-think-level">
+            <option value="关" data-i18n="reasoning_off">Off</option>
+            <option value="低" data-i18n="reasoning_low">Low</option>
+            <option value="中" data-i18n="reasoning_medium">Medium</option>
+            <option value="高" data-i18n="reasoning_high">Max (Deep Reasoning)</option>
+        </select>
+        <span id="cfg-think-hint" style="font-size:10px;color:#888;" data-i18n="reasoning_hint">Temperature and logprobs are disabled when reasoning is on.</span>
+
+        <label data-i18n="temperature">Temperature</label>
+        <input type="range" id="cfg-temperature" min="0" max="20" step="1" value="10">
+        <span id="cfg-temperature-value">1.0</span>
+
+        <label data-i18n="max_tokens">Max Output Tokens</label>
+        <input type="number" id="cfg-max-tokens" min="1" max="65536" step="1" value="32767">
+
+        <h3 style="margin-top:12px;" data-i18n="project_section">📁 Project</h3>
+        <label data-i18n="project_root">Project Root</label>
+        <div class="flex-row">
+            <input type="text" id="cfg-project-root" placeholder="~/vibe_workspace" style="flex:1;">
+            <button class="btn-small" id="browse-project-root" data-i18n="browse">Browse</button>
+        </div>
+        <div class="checkbox-row">
+            <input type="checkbox" id="cfg-web-search">
+            <label for="cfg-web-search" data-i18n="web_search">Enable Web Search</label>
+        </div>
+        <div class="checkbox-desc" data-i18n="web_search_desc">Enable web search for real-time information. Agent can call web_search tool.</div>
+
+        <h3 style="margin-top:12px;" data-i18n="native_confirm_section">🛡️ 原生工具确认</h3>
+        <div class="checkbox-row">
+            <input type="checkbox" id="cfg-native-confirm-enabled">
+            <label for="cfg-native-confirm-enabled" data-i18n="native_confirm_enabled">启用原生工具确认（默认开启）</label>
+        </div>
+        <div class="checkbox-desc" data-i18n="native_confirm_desc">原生内置工具在执行写入 / 删除 / 命令前弹出确认。关闭总开关后，以下子项均不生效。插件工具的审批请在「插件控制面板」配置。</div>
+        <div class="checkbox-row">
+            <input type="checkbox" id="cfg-native-confirm-write">
+            <label for="cfg-native-confirm-write" data-i18n="native_confirm_write">写入/替换文件需确认</label>
+        </div>
+        <div class="checkbox-row">
+            <input type="checkbox" id="cfg-native-confirm-delete">
+            <label for="cfg-native-confirm-delete" data-i18n="native_confirm_delete">删除文件需确认</label>
+        </div>
+        <div class="checkbox-row">
+            <input type="checkbox" id="cfg-native-confirm-exec">
+            <label for="cfg-native-confirm-exec" data-i18n="native_confirm_exec">命令/子进程执行需确认</label>
+        </div>
+
+        <label data-i18n="queue_limit">Event Queue Limit</label>
+        <input type="number" id="cfg-queue-size" min="1" max="1024" value="200">
+        <span id="queue-warning" style="display:none; color:#b8860b; font-size:11px;" data-i18n="queue_warning">Queue size over 300 may cause UI lag.</span>
+
+        <label data-i18n="max_steps">Max Steps</label>
+        <input type="number" id="cfg-max-steps" min="1" max="512" value="128">
+
+        <label data-i18n="task_timeout">Task Timeout (seconds, 0 = disable)</label>
+        <input type="number" id="cfg-task-timeout" min="0" max="3600" step="30" value="0">
+        <span style="font-size:10px;color:#888;" data-i18n="task_timeout_hint">Timeout pauses while waiting for user input (ask/confirm dialogs).</span>
+
+        <label data-i18n="api_request_timeout">API Request Timeout (interrupt)</label>
+        <select id="cfg-api-request-timeout">
+            <option value="30">30s</option>
+            <option value="60">1 min</option>
+            <option value="120">2 min</option>
+            <option value="180">3 min (default)</option>
+            <option value="300">5 min</option>
+            <option value="600">10 min</option>
+            <option value="900">15 min</option>
+            <option value="1800">30 min</option>
+            <option value="3600">60 min</option>
+        </select>
+        <span style="font-size:10px;color:#888;" data-i18n="api_request_timeout_hint">A single API request is interrupted if no data arrives for longer than this. Range 30s ~ 60min, default 3min.</span>
+
+        <h3 style="margin-top:12px;" data-i18n="memory_section">💾 Memory (Conversation History)</h3>
+        <div class="checkbox-row">
+            <input type="checkbox" id="cfg-memory">
+            <label for="cfg-memory" data-i18n="memory_enable">Enable Memory Persistence</label>
+        </div>
+        <div class="checkbox-desc" data-i18n="memory_desc">Save conversation history between sessions for context continuity.</div>
+
+        <label data-i18n="memory_mode">Memory Mode</label>
+        <select id="cfg-memory-mode">
+            <option value="full" data-i18n="memory_full">Full (keep all rounds up to limit)</option>
+            <option value="summary" data-i18n="memory_summary">Summary (compress old rounds)</option>
+        </select>
+
+        <label data-i18n="max_rounds">Max Rounds</label>
+        <input type="number" id="cfg-max-rounds" min="1" max="50" value="10">
+
+        <button class="btn-danger" id="clear-memory-btn" style="margin-top:6px;" data-i18n="clear_memory">Clear Memory</button>
+        <span id="memory-status" style="font-size:11px;color:#888;margin-left:8px;"></span>
+
+        <h3 style="margin-top:12px;" data-i18n="plugins_section">🔌 Plugins</h3>
+        <button class="btn-small" id="open-plugin-panel-btn" style="margin-top:8px;" data-i18n="plugins_open_panel">🔌 打开插件控制面板</button>
+        <div class="checkbox-desc" style="color:#856404;background:#fff8e1;border:1px solid #ffcc80;border-radius:4px;padding:8px;margin-top:8px;" data-i18n="plugins_migrated_hint">插件启用开关、插件目录、插件列表、安全审计、签名校验、网络策略与人工审批等已迁移至独立的「插件控制面板」。</div>
+
+        <!-- NORP 安全系统 -->
+        <h3 style="margin-top:12px;" data-i18n="norp_safety_section">🛡️ NORP Safety System</h3>
+        <div id="norp-safety-section" style="margin-bottom:8px;">
+            <div class="checkbox-row">
+                <input type="checkbox" id="cfg-norp-safe-enabled">
+                <label for="cfg-norp-safe-enabled" data-i18n="norp_safety_enable">Enable Safety System</label>
+            </div>
+            <div class="checkbox-desc" data-i18n="norp_safety_enable_desc">Blocks dangerous commands (e.g. rm -rf /, format C:), UAC elevation, and path traversal.</div>
+            <div id="norp-safety-status" style="margin-top:6px;font-size:12px;padding:8px 12px;border-radius:6px;background:#e8f5e9;color:#2e7d32;" data-i18n="norp_safety_enabled_status">✅ Safety system enabled — dangerous operations will be blocked</div>
+        </div>
+        <!-- end NORP 安全系统 -->
+
+        <!-- 越狱/注入防护 -->
+        <h3 style="margin-top:12px;" data-i18n="jailbreak_guard_section">🔒 越狱/注入防护</h3>
+        <div id="jailbreak-guard-section" style="margin-bottom:8px;">
+            <div class="checkbox-row">
+                <input type="checkbox" id="cfg-jailbreak-guard-enabled">
+                <label for="cfg-jailbreak-guard-enabled" data-i18n="jailbreak_guard_enable">启用越狱/注入检测</label>
+            </div>
+            <div class="checkbox-desc" data-i18n="jailbreak_guard_enable_desc">检测并拦截试图绕过安全约束的提示词注入攻击（DAN、角色覆写、系统提示词泄露等）。关闭后所有消息将直接放行。</div>
+            <div style="margin-top:8px;">
+                <label style="font-size:12px;" data-i18n="jailbreak_guard_action_label">检测到攻击时的操作：</label>
+                <select id="cfg-jailbreak-guard-action" style="width:100%;margin-top:4px;">
+                    <option value="block" data-i18n="jailbreak_guard_action_block">拦截消息（推荐）</option>
+                    <option value="warn" data-i18n="jailbreak_guard_action_warn">仅记录日志警告</option>
+                </select>
+            </div>
+            <div id="jailbreak-guard-status" style="margin-top:6px;font-size:12px;padding:8px 12px;border-radius:6px;background:#e8f5e9;color:#2e7d32;" data-i18n="jailbreak_guard_enabled_status">✅ 越狱防护已启用 — 恶意注入将被拦截</div>
+        </div>
+        <!-- end 越狱/注入防护 -->
+
+        <!-- 运行时完整性检测 -->
+        <h3 style="margin-top:12px;" data-i18n="runtime_health_title">🩺 运行时健康检查</h3>
+        <div id="runtime-health-section" style="margin-bottom:8px;">
+            <div id="runtime-health-status" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;font-size:13px;background:#f0f0f0;">
+                <span style="font-size:20px;">⏳</span>
+                <span id="runtime-health-text" data-i18n="runtime_health_loading">正在加载...</span>
+                <button class="btn-small" id="runtime-health-refresh" style="margin-left:auto;" data-i18n="runtime_health_refresh">🔄 刷新</button>
+                <button class="btn-small" id="runtime-health-toggle" style="margin-left:4px;font-size:10px;padding:2px 6px;" title="展开/收起详情">▶</button>
+            </div>
+            <div id="runtime-health-detail" style="display:none;margin-top:6px;font-size:11px;max-height:250px;overflow-y:auto;background:#f8f8f8;border-radius:4px;padding:8px;font-family:monospace;white-space:pre-wrap;line-height:1.6;"></div>
+        </div>
+        <!-- end 运行时完整性检测 -->
+
+        <!-- 自定义系统提示词 -->
+        <h3 style="margin-top:12px;" data-i18n="custom_prompt_title">📝 自定义系统提示词</h3>
+        <div class="checkbox-row">
+            <input type="checkbox" id="cfg-custom-prompt-enabled">
+            <label for="cfg-custom-prompt-enabled" data-i18n="custom_prompt_enable">启用自定义系统提示词</label>
+        </div>
+        <div class="checkbox-desc" data-i18n="custom_prompt_desc">启用后将使用下方自定义提示词替换默认系统提示词。默认提示词包含工具调用说明和插件系统指南。</div>
+        <div id="custom-prompt-section" style="display:none;">
+            <label style="margin-top:8px;" data-i18n="custom_prompt_source_label">提示词来源</label>
+            <select id="cfg-custom-prompt-source" style="width:100%;">
+                <option value="text" data-i18n="custom_prompt_source_text">📝 手动输入</option>
+                <option value="file" data-i18n="custom_prompt_source_file">📁 从文件导入（.md / .txt）</option>
+            </select>
+            <div id="custom-prompt-text-section" style="margin-top:6px;">
+                <label data-i18n="custom_prompt_content_label">提示词内容</label>
+                <textarea id="cfg-custom-prompt" style="width:100%;height:150px;max-height:300px;font-size:12px;font-family:monospace;padding:8px;border:1px solid #ccc;border-radius:4px;overflow-y:auto;resize:none;" data-i18n-placeholder="custom_prompt_placeholder" placeholder="在此输入自定义系统提示词..."></textarea>
+            </div>
+            <div id="custom-prompt-file-section" style="display:none;margin-top:6px;">
+                <label data-i18n="custom_prompt_import_file_label">导入文件</label>
+                <div class="flex-row">
+                    <input type="text" id="cfg-custom-prompt-file" data-i18n-placeholder="custom_prompt_no_file" placeholder="未选择文件" style="flex:1;" readonly>
+                    <button class="btn-small" id="cfg-custom-prompt-browse" data-i18n="custom_prompt_browse">📂 浏览</button>
+                </div>
+                <span style="font-size:10px;color:#888;" data-i18n="custom_prompt_format_hint">支持 .md 和 .txt 格式</span>
+            </div>
+        </div>
+        <!-- end 自定义系统提示词 -->
+
+        <!-- 视觉 API（开放接口） -->
+        <h3 style="margin-top:12px;" data-i18n="vision_section">👁️ 视觉 API（开发者接口）</h3>
+        <div id="vision-section" style="margin-bottom:8px;">
+            <div class="checkbox-row">
+                <input type="checkbox" id="cfg-vision-enabled">
+                <label for="cfg-vision-enabled" data-i18n="vision_enable">启用视觉 API</label>
+            </div>
+            <div class="checkbox-desc" data-i18n="vision_enable_desc">开启后，上传的图片/视频将交给视觉层处理。多模态视觉模型由开发者自行接入。</div>
+            <div id="vision-config" style="display:none;margin-top:8px;">
+                <label style="font-size:12px;" data-i18n="vision_service_url_label">外部视觉服务地址（可选）</label>
+                <input type="text" id="cfg-vision-service-url" data-i18n-placeholder="vision_service_url_placeholder" placeholder="https://your-vision-service.example.com/process" style="width:100%;margin-top:4px;">
+                <div class="checkbox-desc" data-i18n="vision_service_url_desc">留空则仅使用本地注册的回调（register_vision_handler）。服务按 POST JSON 协议接收图片/视频，返回文字描述。</div>
+            </div>
+        </div>
+        <!-- end 视觉 API -->
+
+        <!-- 🛠️ 调试入口 -->
+        <div style="margin-top:16px;padding-top:12px;border-top:1px dashed #ccc;">
+            <button id="debug-btn" class="btn-debug" style="width:100%;">🛠️ 调试（Agent 运行诊断）</button>
+        </div>
+
+        </div>
+        <!-- end modal-body -->
+
+        <div class="btn-row" style="margin-top:16px; padding: 0 20px 20px;">
+            <button class="btn-danger" id="settings-restore-defaults" data-i18n="restore_defaults">Restore Defaults</button>
+            <div>
+                <button class="btn-secondary" id="settings-cancel" data-i18n="cancel">Cancel</button>
+                <button class="btn-primary" id="settings-save-btn" data-i18n="save">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="apikey-modal" class="modal">
+    <div class="modal-content">
+        <h2>Change API Key</h2>
+        <input type="password" id="apikey-input" placeholder="Enter API Key" style="margin:12px 0;">
+        <div class="btn-row" style="justify-content:space-between;">
+            <button class="btn-secondary" id="apikey-get-btn">Get Key</button>
+            <div>
+                <button class="btn-secondary" id="apikey-cancel-btn">Cancel</button>
+                <button class="btn-primary" id="apikey-confirm-btn" style="margin-left:6px;">Confirm</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="about-modal" class="modal">
+    <div class="modal-content">
+        <h2>About</h2>
+        <p><strong>Author:</strong> xingluosama</p>
+        <p><strong>Studio:</strong> NORP Studio</p>
+        <p><strong>Version:</strong> Release 1.1</p>
+        <p style="margin-top:12px; color:#888; font-size:12px;">Built based on the OpenAI SDK specification.</p>
+        <div class="btn-row">
+            <button class="btn-primary" id="about-close-btn">OK</button>
+        </div>
+    </div>
+</div>
+
+<!-- Plugin Control Panel Modal (插件控制面板) -->
+<div id="plugin-panel-modal" class="modal">
+    <div class="modal-content" style="max-width:780px;max-height:90vh;display:flex;flex-direction:column;">
+        <div class="modal-body" style="max-height:78vh;overflow-y:auto;padding:0 20px 12px;flex:1;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                <h2 style="margin:0;" data-i18n="plugins_panel_title">🔌 插件控制面板</h2>
+                <button class="btn-small" id="plugin-panel-refresh" data-i18n="reload_plugins">🔄 刷新</button>
+            </div>
+
+            <div class="checkbox-row" style="margin-top:10px;">
+                <input type="checkbox" id="pp-plugins-enabled">
+                <label for="pp-plugins-enabled" data-i18n="plugins_enable">启用外部插件</label>
+            </div>
+            <div class="checkbox-desc" data-i18n="plugins_enable_desc">从下列目录加载插件。禁用则仅使用内置工具。</div>
+
+            <h3 style="margin-top:10px;" data-i18n="plugin_dirs">Plugin Directories</h3>
+            <div id="plugin-dirs-list" style="margin-bottom:6px;"></div>
+            <div class="flex-row" style="margin-bottom:4px;">
+                <button class="btn-small" id="add-plugin-dir" data-i18n="add_dir">+ Add Directory</button>
+                <button class="btn-small" id="reload-plugins-btn" style="margin-left:4px;" data-i18n="reload_plugins">🔄 Reload</button>
+            </div>
+
+            <h3 style="margin-top:10px;" data-i18n="plugin_list_title">已加载插件</h3>
+            <div id="plugin-list" style="margin-top:6px;font-size:12px;max-height:200px;overflow-y:auto;background:#f8f8f8;border-radius:4px;padding:6px;"></div>
+
+            <h3 style="margin-top:12px;" data-i18n="plugin_security_section">🔒 Plugin Security</h3>
+            <div class="checkbox-row">
+                <select id="cfg-security-audit" style="flex:1;">
+                    <option value="off" data-i18n="security_audit_off">Off — Skip all checks</option>
+                    <option value="warn" data-i18n="security_audit_warn">Warn — Log issues but allow loading</option>
+                    <option value="block" data-i18n="security_audit_block">Block — Reject plugins with critical issues</option>
+                </select>
+            </div>
+            <div class="checkbox-desc" data-i18n="security_audit_desc"><b>Code Audit:</b> Scans plugin source for dangerous patterns before loading.</div>
+
+            <div class="checkbox-row">
+                <select id="cfg-security-import-restrict" style="flex:1;">
+                    <option value="off" data-i18n="security_import_off">Off — No import restrictions</option>
+                    <option value="safe" data-i18n="security_import_safe">Safe — Block known dangerous modules</option>
+                    <option value="strict" data-i18n="security_import_strict">Strict — Only allow safe built-in modules</option>
+                </select>
+            </div>
+            <div class="checkbox-desc" data-i18n="security_import_desc"><b>Import Restriction:</b> Limits which Python modules plugins can import.</div>
+
+            <div class="checkbox-row">
+                <input type="checkbox" id="cfg-security-permissions">
+                <label for="cfg-security-permissions" data-i18n="security_permissions">Require Permission Declarations</label>
+            </div>
+            <div class="checkbox-row">
+                <input type="checkbox" id="cfg-security-resource-limit">
+                <label for="cfg-security-resource-limit" data-i18n="security_resource">Enable Resource Limits</label>
+            </div>
+
+            <h3 style="margin-top:12px;" data-i18n="isolation_section">🧩 进程隔离</h3>
+            <div class="checkbox-row">
+                <select id="pp-isolation" style="flex:1;">
+                    <option value="process" data-i18n="isolation_process">进程级隔离（推荐）</option>
+                    <option value="inprocess" data-i18n="isolation_inprocess">进程内加载（仅调试，不推荐）</option>
+                </select>
+            </div>
+            <div class="checkbox-desc" data-i18n="isolation_desc">插件在独立子进程中运行，严禁直接挂载到主进程。进程内模式仅在开发调试时使用。</div>
+
+            <h3 style="margin-top:12px;" data-i18n="signature_section">🔏 签名 / 来源校验</h3>
+            <div class="checkbox-row">
+                <input type="checkbox" id="pp-signature-verify">
+                <label for="pp-signature-verify" data-i18n="signature_verify">启用签名/来源校验（默认开启）</label>
+            </div>
+            <div class="checkbox-desc" data-i18n="signature_desc">对插件源码做 Ed25519 签名验证。受信任签名的插件放宽导入限制；未签名插件默认严格限制；被篡改插件直接拒绝。</div>
+
+            <h3 style="margin-top:12px;" data-i18n="network_section">🌐 网络策略（SSRF 防护）</h3>
+            <div class="checkbox-row">
+                <select id="pp-network-policy" style="flex:1;">
+                    <option value="deny" data-i18n="network_deny">禁止访问网络（默认）</option>
+                    <option value="audited_public" data-i18n="network_audited">仅受审计的公网（URL 白名单）</option>
+                    <option value="public_only" data-i18n="network_public">全部公网（禁止内网）</option>
+                    <option value="allow_all" data-i18n="network_all">全部网络（含内网）</option>
+                </select>
+            </div>
+            <div class="checkbox-desc" data-i18n="network_desc">任何非「全部网络」的策略都会拦截内网 / 环回 / 元数据地址。</div>
+            <label style="font-size:12px;" data-i18n="network_url_allowlist">URL 白名单（逗号分隔）</label>
+            <input type="text" id="pp-network-url-allowlist" style="width:100%;margin-bottom:6px;box-sizing:border-box;">
+            <label style="font-size:12px;" data-i18n="network_domain_allowlist">域名白名单（逗号分隔）</label>
+            <input type="text" id="pp-network-domain-allowlist" style="width:100%;margin-bottom:6px;box-sizing:border-box;">
+
+            <h3 style="margin-top:12px;" data-i18n="plugin_approval_section">🛡️ 插件工具调用审批</h3>
+            <div class="checkbox-row">
+                <input type="checkbox" id="pp-approval-enabled">
+                <label for="pp-approval-enabled" data-i18n="plugin_approval_enabled">启用插件工具调用审批（默认开启）</label>
+            </div>
+            <div class="checkbox-desc" data-i18n="plugin_approval_desc">开启后，调用插件提供的工具前需人工确认。原生内置工具的确认请在「设置 → 原生工具确认」中配置。</div>
+
+            <div id="plugin-security-audit-summary" style="margin-top:8px;font-size:11px;color:#666;background:#f8f8f8;border-radius:4px;padding:6px;max-height:120px;overflow-y:auto;display:none;"></div>
+        </div>
+        <div class="btn-row" style="padding:0 20px 16px;display:flex;justify-content:space-between;">
+            <button class="btn-secondary" id="plugin-panel-close" data-i18n="cancel">取消</button>
+            <button class="btn-primary" id="plugin-panel-save" data-i18n="save">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- Message Center Modal -->
+<div id="message-center-modal" class="modal">
+    <div class="modal-content" style="max-width:540px;max-height:75vh;">
+        <div class="modal-body" style="max-height:55vh;overflow-y:auto;padding:0 16px 12px;">
+            <h2 data-i18n="msg_center_title">📨 消息中心</h2>
+            <div id="message-center-list"></div>
+            <div class="msg-empty" id="message-center-empty" data-i18n="msg_center_empty">暂无消息</div>
+        </div>
+        <div class="btn-row" style="padding:0 16px 16px;display:flex;justify-content:space-between;">
+            <button class="btn-small btn-danger" id="msg-center-clear-all" data-i18n="msg_center_clear_all">清空全部</button>
+            <button class="btn-primary" id="msg-center-close" data-i18n="ok">确定</button>
+        </div>
+    </div>
+</div>
+
+
+<!-- Debug Panel Modal (Agent 调试面板) -->
+<div id="debug-modal" class="modal">
+    <div class="modal-content" style="max-width:960px;max-height:88vh;display:flex;flex-direction:column;">
+        <div class="modal-body" style="max-height:78vh;overflow-y:auto;padding:0 20px 12px;flex:1;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <h2 style="margin:0;">🛠️ Agent 调试面板</h2>
+                <div style="display:flex;gap:6px;">
+                    <button class="btn-small" id="debug-refresh-btn">🔄 刷新</button>
+                    <button class="btn-small" id="debug-open-log-btn">📂 打开日志目录</button>
+                </div>
+            </div>
+            <div id="debug-summary" style="font-size:12px;color:#666;margin-bottom:10px;"></div>
+            <div id="debug-content"></div>
+        </div>
+        <div class="btn-row" style="padding:0 20px 16px;display:flex;justify-content:flex-end;">
+            <button class="btn-secondary" id="debug-close-btn">关闭</button>
+        </div>
+    </div>
+</div>
+
+
+<!-- Security off warning modal (non-dismissible by backdrop click) -->
+<div id="security-off-warning-modal" class="modal" style="z-index:2000;">
+    <div class="modal-content" style="max-width:480px;text-align:center;border:2px solid #dc3545;">
+        <div style="font-size:48px;margin-bottom:8px;">⚠️</div>
+        <h2 style="color:#dc3545;" data-i18n="security_off_title">⚠️ Security Warning</h2>
+        <p style="font-size:14px;color:#333;margin:12px 0;line-height:1.6;" data-i18n="security_off_desc">
+            You are about to <b style="color:#dc3545;">disable ALL plugin security checks</b>.
+        </p>
+        <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:10px;margin:10px 0;text-align:left;font-size:12px;color:#856404;">
+            <b data-i18n="security_off_means">This means:</b><br>
+            • <span data-i18n="security_off_item1">No AST code audit before loading</span><br>
+            • <span data-i18n="security_off_item2">No import restrictions</span><br>
+            • <span data-i18n="security_off_item3">No permission checks</span><br>
+            • <span data-i18n="security_off_item4">Any plugin code can execute freely</span><br>
+            <br>
+            <b data-i18n="security_off_note">Only the jailbreak guard and NORP Safe system will still protect you.</b>
+        </div>
+        <p style="font-size:13px;color:#dc3545;font-weight:700;margin:8px 0;" data-i18n="security_off_confirm_q">
+            Are you absolutely sure you want to proceed?
+        </p>
+        <p style="font-size:11px;color:#888;" data-i18n="security_off_dismiss_note">This dialog cannot be dismissed by clicking outside — you must make a choice.</p>
+        <div class="btn-row" style="justify-content:center;gap:12px;margin-top:16px;">
+            <button class="btn-secondary" id="security-off-cancel-btn" style="min-width:100px;" data-i18n="security_off_cancel">↩ Cancel</button>
+            <button class="btn-primary" id="security-off-confirm-btn" style="min-width:100px;background:#dc3545;border-color:#dc3545;" data-i18n="security_off_confirm_btn">⚠ I Understand</button>
+        </div>
+    </div>
+</div>
+<!-- NORP Safety off warning modal (non-dismissible by backdrop click) -->
+<div id="norp-safety-off-warning-modal" class="modal" style="z-index:2000;">
+    <div class="modal-content" style="max-width:500px;text-align:center;border:3px solid #b71c1c;background:#fffbfb;">
+        <div style="font-size:52px;margin-bottom:6px;">🛡️⚠️</div>
+        <h2 style="color:#b71c1c;font-size:18px;" data-i18n="norp_safety_off_title">⚠️ CRITICAL SAFETY WARNING</h2>
+        <p style="font-size:14px;color:#333;margin:12px 0;line-height:1.6;" data-i18n="norp_safety_off_desc">
+            You are about to <b style="color:#b71c1c;">DISABLE the NORP Safety System</b> — the <b style="color:#b71c1c;">FINAL security barrier</b>.
+        </p>
+        <div style="background:#ffebee;border:2px solid #dc3545;border-radius:6px;padding:12px;margin:10px 0;text-align:left;font-size:12px;color:#b71c1c;">
+            <b data-i18n="norp_safety_off_means">With NORP Safety OFF:</b><br>
+            <div style="margin-top:6px;line-height:1.8;">
+            • <span data-i18n="norp_safety_off_item1">ALL dangerous commands execute freely (rm -rf /, format C:, del /F /S, etc.)</span><br>
+            • <span data-i18n="norp_safety_off_item2">UAC elevation / admin privilege escalation is allowed</span><br>
+            • <span data-i18n="norp_safety_off_item3">Path traversal outside the project workspace is permitted</span><br>
+            • <span data-i18n="norp_safety_off_item4">Any destructive operation on your system becomes possible</span>
+            </div>
+            <br>
+            <b style="color:#b71c1c;" data-i18n="norp_safety_off_note">⚠️ There will be NO remaining protection layer. The Agent can do ANYTHING.</b>
+        </div>
+        <p style="font-size:14px;color:#b71c1c;font-weight:700;margin:8px 0;" data-i18n="norp_safety_off_confirm_q">
+            Are you absolutely sure you want to DISABLE all safety protections?
+        </p>
+        <p style="font-size:11px;color:#888;">This dialog cannot be dismissed by clicking outside — you must make a choice.</p>
+        <div class="btn-row" style="justify-content:center;gap:12px;margin-top:16px;">
+            <button class="btn-secondary" id="norp-safety-off-cancel-btn" style="min-width:100px;" data-i18n="norp_safety_off_cancel">↩ Cancel</button>
+            <button class="btn-primary" id="norp-safety-off-confirm-btn" style="min-width:140px;background:#b71c1c;border-color:#b71c1c;font-weight:700;" data-i18n="norp_safety_off_confirm_btn">⚠️ DISABLE SAFETY</button>
+        </div>
+    </div>
+</div>
+
+<div id="firstrun-modal" class="modal">
+    <div class="modal-content" style="max-width:480px;">
+        <h2>🚀 Welcome to NORP Agent</h2>
+        <p style="font-size:13px;color:#666;margin-bottom:12px;">It looks like this is your first time running the agent. Please complete the basic setup below.</p>
+
+        <label>API Key <span style="color:#dc3545;">*</span></label>
+        <div class="flex-row">
+            <input type="password" id="firstrun-apikey" placeholder="sk-..." style="flex:1;">
+            <button class="btn-small" id="firstrun-getkey">Get Key</button>
+        </div>
+        <span id="firstrun-key-status" style="font-size:11px;color:#888;"></span>
+
+        <label>API Base URL</label>
+        <input type="text" id="firstrun-api-base" placeholder="https://api.deepseek.com" value="https://api.deepseek.com">
+
+        <label>Model</label>
+        <select id="firstrun-model">
+            <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+            <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+            <option value="deepseek-chat">deepseek-chat</option>
+            <option value="deepseek-reasoner">deepseek-reasoner</option>
+        </select>
+
+        <label>Project Root</label>
+        <div class="flex-row">
+            <input type="text" id="firstrun-project-root" placeholder="Select project directory..." style="flex:1;">
+            <button class="btn-small" id="firstrun-browse">Browse</button>
+        </div>
+
+        <p style="font-size:11px;color:#888;margin-top:10px;">You can change all settings later in the Settings panel.</p>
+        <div class="btn-row">
+            <button class="btn-primary" id="firstrun-done-btn">Start Using</button>
+        </div>
+    </div>
+</div>
+
+<div id="external-viewer">
+    <div class="viewer-bar">
+        <button class="back-btn" id="external-back-btn">← 返回</button>
+        <input class="viewer-url" id="external-viewer-url" type="text" spellcheck="false" placeholder="输入或粘贴 URL，按回车跳转…">
+        <button class="ext-open-btn" id="external-open-btn">↗ 在浏览器中打开</button>
+    </div>
+    <iframe id="external-iframe" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+</div>
+
+
+<!-- SCRIPTS injected by build tool -->
+</body>
+</html>

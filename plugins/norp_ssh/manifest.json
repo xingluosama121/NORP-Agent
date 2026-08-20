@@ -1,0 +1,22 @@
+{
+    "name": "NORP SSH",
+    "version": "1.1.0",
+    "publisher": "norp-community",
+    "description": "远程服务器 SSH 运维：主机管理（含 ~/.ssh/config 导入，跳过通配符）、连通性测试、远程命令执行、文件上传/下载、本地端口转发隧道、集群并发执行。支持密钥/密码认证、passphrase 密钥、ProxyJump 跳板链，以及 OpenSSH ControlMaster 持久连接池（空闲 30 分钟自动断开，失败自动回退）。",
+    "entry": "plugin.py",
+    "enabled": true,
+    "permissions": [
+        "network",
+        "process",
+        "file_read",
+        "file_write"
+    ],
+    "signature": {
+        "algorithm": "ed25519",
+        "public_key": "eed0f67efa7eceb9d95fd7aa8c279c4939e1fdbf81ea010338ef7e2028b20286",
+        "signature": "2c76f70be5bd3bb71824b516f5137735c862597d8e95a4b2328f7aa25301982f1fb0ebafc5567f22cb45b70852a8be0040bda792e8569a17aac7866f0e552d0d",
+        "signed_files": [
+            "plugin.py"
+        ]
+    }
+}

@@ -1,0 +1,458 @@
+Metadata-Version: 2.4
+Name: norpagent
+Version: 0.5.1
+Summary: Pluggable component-based agent framework: modular architecture layers with address functions, np() single-call startup, 9 layers / 29 hooks, norpagent.safe() decoupled security, process-level plugin isolation, ready-to-use preset modes
+Author: xingluosama121
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/xingluosama121/norp-agent
+Project-URL: Documentation, https://github.com/xingluosama121/norp-agent/tree/main/docs
+Project-URL: Issues, https://github.com/xingluosama121/norp-agent/issues
+Keywords: agent,plugin,llm,framework,multi-agent,sandbox,hooks,security,context
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Provides-Extra: openai
+Requires-Dist: openai>=1.40; extra == "openai"
+Provides-Extra: anthropic
+Requires-Dist: anthropic>=0.34; extra == "anthropic"
+Provides-Extra: web
+Requires-Dist: requests>=2.31; extra == "web"
+Provides-Extra: security
+Requires-Dist: cryptography>=41; extra == "security"
+Provides-Extra: all
+Requires-Dist: openai>=1.40; extra == "all"
+Requires-Dist: anthropic>=0.34; extra == "all"
+Requires-Dist: requests>=2.31; extra == "all"
+Requires-Dist: cryptography>=41; extra == "all"
+Provides-Extra: windows
+Dynamic: license-file
+
+# norpagent
+
+> Copyright (c) 2026 xingluosama121, MIT Licensed
+
+norpagent is a registry-based, pluggable component framework for building agents.
+
+Models, tools, session management, sandbox environments, task scheduling,
+context stores, user interfaces, and external plugins are all independent
+components resolved by name through a registry. Developers can replace or
+combine components without modifying framework core code.
+
+## Core concepts
+
+```
++--------------------------------------------------------------+
+|                           Registry                           |
+|   models / tools / sessions / sandboxes / schedulers / UI /  |
+|                     plugins / components                     |
++--------------------------------------------------------------+
+|                            Preset                            |
+|   Declarative config: component selection + behavior params, |
+|                    defining a run mode                       |
++--------------------------------------------------------------+
+|                   AgentRuntime (generic loop)                |
+|   Decoupled from specific models/tools: message build ->     |
+|           model call -> tool execution -> backfill           |
++--------------------------------------------------------------+
+```
+
+- Models: `registry.register_model("my_model", MyModelProvider())`, referenced by name in presets
+- Tools: `registry.register_tool("my_tool", MyTool())`; register a whole plugin with `registry.register_plugin(MyPlugin())`
+- Replaceable components: session stores, sandboxes, task schedulers, UI adapters, context stores, project managers
+- Generic component namespace: `registry.register_component(kind, name, factory)`; presets declare
+  `components={"kind": "name"}`
+
+## Installation
+
+```bash
+pip install norpagent                  # Core package, no third-party dependencies (Mock model + built-in tools)
+pip install norpagent[openai]          # OpenAI-compatible model adapter (OpenAI/DeepSeek/Qwen/vLLM/Ollama)
+pip install norpagent[anthropic]       # Claude series model adapter
+pip install norpagent[web]             # Web access enhancement (requests + bs4; stdlib engine used when not installed)
+pip install norpagent[security]        # Plugin signature verification (cryptography; without it signatures are treated as untrusted)
+pip install norpagent[all]             # All optional dependencies
+```
+
+Model adapters and tools are registered with the core package and lazy-loaded by the SDK:
+missing extras do not affect registration or mode listing; an install hint is
+shown only when the component is actually invoked.
+
+## Quick start (np() entry point, since v0.5)
+
+```python
+import norpagent as np
+
+np()                        # standard preset + Web frontend (all built-in tools)
+running = True
+while running:
+    if np.stop() == True:   # lifecycle function: exit when the application ends
+        running = False
+```
+
+After startup the console prints `[norpagent] listening on http://127.0.0.1:8787/`;
+open that address in a browser to get the chat UI (front.html: multi-tab sessions /
+streaming rendering / settings / plugin panel). The UI language can be set with
+`np(language="zh_CN")` (default: English).
+
+- The default preset is **standard**: the model can use all built-in tools (files /
+  commands / web / context management / project management / long-running task
+  collaboration). Without an API key the mock model is used automatically; enter
+  a model and key in the UI "Settings" to switch to a real model;
+- "Settings -> Reasoning effort" maps to the model's `reasoning_effort` (passed
+  through for OpenAI reasoning models and DeepSeek V4; DeepSeek V4 transmits the
+  chain-of-thought `reasoning_content` separately from the body text, and the
+  kernel passes it back verbatim on rounds where tool calls occurred; selecting
+  "off" in the UI translates to DeepSeek V4's `thinking=disabled`). When reasoning
+  is enabled the temperature parameter is disabled automatically;
+- The "Project root" default follows the OS (Windows: `Documents\NORP-Agent`;
+  macOS: `~/Documents/NORP-Agent`; Linux: `~/norpagent-workspace`); the
+  "Browse" button opens a directory picker (navigation via a read-only backend listing).
+
+**Web UI behavior and persistence**:
+
+- **Settings persistence**: model / API key / language / plugin directory settings
+  are persisted to `~/.norpagent/webui_config.json` after saving in the browser
+  (overridable with the `NORPAGENT_WEBUI_CONFIG` environment variable); they
+  survive page refreshes and np() process restarts;
+- **Page cache prevention**: page responses carry `Cache-Control: no-store`;
+- **Client disconnect handling**: browser refresh / tab close / curl interruption
+  are handled silently without tracebacks in the console;
+- **Port fallback**: if 8787 is taken, up to 10 subsequent ports are tried; the
+  console prints the actually bound port;
+- **Request body guards**: negative Content-Length is treated as no body; request
+  bodies over 1MB are rejected;
+- **Event routing**: kernel session ids match browser tab ids; reasoning / reply /
+  task-done events are delivered to the corresponding session.
+
+**Architecture slots + address functions**: apart from the low-level minimal kernel
+(ArchLayer / address resolution / registry / event bus), all components are slots.
+No address = default logic; an address = plug in an implementation:
+
+```python
+np(preset="standard")                                  # preset mode
+np(model="openai_compat")                              # model
+np(async_loop="myapp.loop:create")                     # event loop system
+np(frontend="norpagent.frontends.console:ConsoleFrontend")  # console frontend
+np(frontend="norpagent.frontends.headless:HeadlessFrontend")# headless (output printed to stdout)
+np(port=9000, language="zh_CN")                        # Web port and UI language
+np(session="sqlite", sandbox="pooled", security="high")# component replacement
+loop = np.nasyncio("myapp.loop:create")                # standalone architecture function for the loop system
+```
+
+Single task (headless mode, output printed to stdout):
+
+```python
+np(prompt="Summarize the README", preset="standard")
+while True:
+    if np.stop():
+        break
+print(np.current().last_result.final_content)
+```
+
+See [docs/DEVELOPER_MANUAL.md](docs/DEVELOPER_MANUAL.md) for the developer manual.
+
+## Quick start (manual assembly)
+
+```python
+from norpagent import Registry, AgentRuntime
+from norpagent.builtin import install_defaults
+from norpagent.modes import register_all_presets
+
+reg = Registry()
+install_defaults(reg)          # register built-in models/tools/sessions/sandboxes/schedulers/UI/components
+register_all_presets(reg)      # register standard / ptc / minimal / creative presets
+
+agent = AgentRuntime(reg, preset="minimal")
+result = agent.run("hello")
+print(result.final_content)
+```
+
+Command line:
+
+```bash
+python -m norpagent --list-modes        # list all preset modes
+python -m norpagent --mode minimal      # interactive REPL in minimal mode
+python -m norpagent --mode standard --model mock --prompt "..."   # single task (mock model)
+python -m norpagent --mode standard --model-name deepseek-v4-flash --base-url https://api.deepseek.com/v1
+python -m norpagent --mode ptc --prompt "Call the echo tool from code" --model mock
+python -m norpagent --mode-file my_mode.py   # load a custom mode file
+python -m norpagent --mode standard --session sqlite --call-timeout 60   # persistent session + hard timeout
+python -m norpagent --mode standard --ui web --port 8787      # Web UI (HTTP + SSE event stream)
+python -m norpagent --mode standard --plugin-dir ./my_plugins  # load external plugins (signature -> audit -> import restriction)
+python -m norpagent plugin-sign --gen                        # generate a plugin signature keypair
+python -m norpagent plugin-sign my_plugin.py --key <private-key-hex>  # sign a plugin (generates .sig)
+```
+
+## Preset modes
+
+| Mode | Component combination |
+|------|-----------------------|
+| `minimal` | mock/openai models + echo/clock tools (deterministic environment for model benchmarking) |
+| `standard` | openai_compat model + file/command/web/context/project/task tools (persistent sessions + long-running task scheduling) |
+| `ptc` | openai_compat model + run_python + business tools (PTC: the model generates Python code combining multi-step tool calls) |
+| `creative` | mock model + basic tools, arbitrary overrides allowed (supports --mode-file custom mode files) |
+
+## Built-in component catalog
+
+**Model adapters**
+| Name | Description |
+|------|-------------|
+| `mock` | Deterministic scripted-response model (benchmarking / debugging, no third-party dependencies) |
+| `openai_compat` | OpenAI-compatible services: OpenAI / DeepSeek / Qwen / vLLM / Ollama (norpagent[openai]) |
+| `anthropic` | Claude series (norpagent[anthropic]) |
+
+**Tools**
+| Name | Description |
+|------|-------------|
+| `echo` / `get_time` | Basic tools (minimal mode) |
+| `run_python` | PTC execution core: code runs isolated in a **sandbox subprocess** (AST precheck + restricted builtins + clean namespace + hard kill on timeout), `call_tool()` composes multi-step tool calls over the protocol channel |
+| `file_read` / `file_write` / `file_list` / `file_delete` | File operations: confined to the workspace root; absolute paths and `..` traversal rejected |
+| `exec_cmd` | Command execution: goes through the sandbox protocol (replace the sandbox implementation to replace the execution environment) |
+| `web_search` / `web_fetch` / `web_extract_links` | Web access: SSRF protection (private/loopback addresses rejected), requests+bs4 preferred with stdlib fallback |
+| `context_add` / `context_search` / `context_list` / `context_delete` | Context management: cross-session searchable knowledge base (FTS5 + BM25, mixed Chinese/English tokenization) |
+| `project_status` | Project management: file statistics, recent changes, git branch and change awareness |
+| `task_submit` / `task_list` / `task_status` / `task_cancel` | Long-running task collaboration: subtasks queued by priority, multi-agent orchestration, resume after interruption |
+
+**Sessions / sandboxes / scheduling / UI / components**
+| Name | Description |
+|------|-------------|
+| `memory` / `sqlite` | Session stores: in-process / SQLite persistence (default `~/.norpagent/sessions.db`) |
+| `subprocess` / `pooled` | Sandboxes: one-shot subprocess / pooled (reuse + concurrency cap + hard-kill the entire process tree on timeout) |
+| `simple` / `persistent` | Task scheduling: in-process FIFO / SQLite-persistent priority queue (`resume()` continues after a crash) |
+| `console` / `web` | UI: console / Web (HTTP + SSE event stream, no third-party dependencies) |
+| `context_store=fts5` | Context store component (default `~/.norpagent/context.db`) |
+| `project_manager=basic` | Project management component (workspace `.norpagent/project.json` metadata) |
+
+## Context management
+
+Agents write intermediate conclusions, external material, and code snippets from
+long-running tasks into the context store for cross-session, cross-task retrieval:
+
+```python
+from norpagent.builtin.context import FTS5ContextStore
+
+store = FTS5ContextStore()                    # default ~/.norpagent/context.db
+store.add("The network module falls back between the requests and urllib engines", source="notes", title="network")
+hits = store.search("network engine")         # BM25 relevance ranking, mixed Chinese/English tokenization
+```
+
+After a preset declares `components={"context_store": "fts5"}`, tools access the
+store via `ctx.context_store`; to replace the implementation, register another
+component factory - no core code changes needed.
+
+## Task scheduling and multi-agent collaboration
+
+```python
+from norpagent.builtin.scheduler.persistent import PersistentTaskScheduler
+from norpagent.protocols.scheduler import AgentTask
+
+sched = PersistentTaskScheduler()             # tasks persisted to disk, survive process restarts
+sched.submit(AgentTask(id="", user_input="Organize documents", params={"priority": 0}))
+sched.submit(AgentTask(id="", user_input="Run tests", params={"priority": 5}))
+sched.resume()                                # crash recovery: leftover running tasks re-queued
+
+agent = AgentRuntime(reg, preset="standard")
+results = sched.drain(agent.task_runner())    # execute by priority; subtasks may specify a different preset
+```
+
+Models submit subtasks via the `task_submit` tool; `task.preset_name` selects a
+different mode, i.e. a different sub-Agent (sharing the same registry and
+component store).
+
+## External plugins
+
+```python
+from norpagent.plugins import install_plugin_dirs
+
+loader = install_plugin_dirs(registry, ["my_plugins"], config={
+    "plugin_security_audit": "warn",          # off / warn / block
+    "plugin_security_import_restrict": "off", # off / safe / strict
+    "plugin_signature_verify": True,          # Ed25519 verification (norpagent[security])
+    "plugin_network_policy": "deny",          # deny / audited_public / public_only / allow_all
+})
+for info in loader.plugins:
+    print(info.name, info.signature_status, info.enabled)
+```
+
+Plugin format: module-level `PLUGIN_NAME` / `TOOLS` (OpenAI function schemas) /
+`execute(tool_name, args, ctx)` / 15 lifecycle hooks / `APPROVAL_HINTS`.
+
+Plugin loading security pipeline: **discovery -> signature verification (invalid
+rejected) -> AST audit (critical rejected, including getattr / __dict__ reflection
+bypass detection) -> permission declaration check -> import restriction (static
+precheck + runtime meta_path interception) -> adapter registration**. Trusted
+signatures relax the audit level.
+
+**PluginSystem facade and process-level isolation**:
+
+```python
+from norpagent.plugins import PluginSystem
+
+ps = PluginSystem(registry, ["my_plugins"], config={"plugin_isolation": "auto"})
+ps.load(); ps.status(); ps.reload("my_tool"); ps.shutdown()
+```
+
+Module-level `ISOLATION = "process"` enables **process-level plugin isolation**:
+plugin code is loaded and executed only inside a host subprocess
+(`python -m norpagent.plugins.host`, JSON-lines RPC protocol); tools and hooks are
+forwarded over RPC, crashes restart automatically, hook execution is time-limited.
+Every pipeline stage (discovery/load/audit/register) is a hook; HookVeto can abort
+the current stage.
+
+## 9 layers, 29 hooks (norpagent.hooks)
+
+Execution structures are exposed as hook APIs and can be intervened on:
+
+```python
+from norpagent.hooks import before_model_call, after_tool_call, HookVeto, HookLayer
+
+before_model_call.subscribe(logger, system=reg)        # module-level subscription
+agent.hooks.after_tool_call.subscribe(observer)        # runtime-bound view
+
+def forbid_rm(event):                                   # mutating hook: raise HookVeto to abort the current execution structure
+    if event.get("tool_name") == "file_delete":
+        raise HookVeto("deleting files is forbidden")
+agent.hooks.before_tool_call.subscribe(forbid_rm)
+
+net = HookLayer("L10_network", order=100)              # custom layer + custom hook
+net.hook("before_network_call", mutating=True)
+agent.hooks.install_layer(net)
+```
+
+Nine layers: L1 runtime lifecycle -> L2 task -> L3 input -> L4 session and
+history -> L5 message assembly -> L6 step -> L7 model call -> L8 tool call ->
+L9 result finalization. Mutating hooks can rewrite the data flow
+(input/messages/arguments/results); see docs/hooks.md.
+
+## Security system entry point: norpagent.safe()
+
+```python
+from norpagent import safe
+
+kit = safe(reg, level="standard")     # enable security components by level (basic/standard/high)
+kit.scan_input(text)                  # jailbreak/injection detection
+kit.harden(prompt, tools)             # prompt hardening
+kit.audit_file(path)                  # AST audit
+kit.verify_plugin(path)               # signature verification
+kit.check_network(url)                # SSRF verdict
+```
+
+Security components (guard/hardening/approval/audit/signature/network
+policy/isolation policy) are provided uniformly by `norpagent.safe()`: input guard
+= L3 hook, prompt hardening = L5 hook, the remaining runtime policies =
+`registry.security`; the kernel does not depend on `norpagent.security` directly.
+See docs/security.md.
+
+## Security guards (norpagent.security)
+
+```python
+from norpagent.security import (
+    SourceAuditor,       # AST source audit: dangerous calls/imports/dynamic bypasses
+    NetworkPolicy,       # plugin network policy + SSRF protection
+    ApprovalPolicy,      # human approval: native tool confirmation + plugin tool approval
+    scan_message,        # jailbreak/prompt injection detection (DAN/role override/zero-width chars/Base64)
+    SignatureVerifier,   # Ed25519 plugin signature verification
+)
+```
+
+Kernel integration (opt-in):
+
+- `params["jailbreak_guard"] = True`: block jailbreak/injection before user input reaches the model;
+- `params["harden_prompt"] = True`: append security hardening rules to the system prompt;
+- `params["approval_policy"]` / `params["approval_config"]`:
+  human approval before tool calls (via UI `ask_user`; user denial blocks the call).
+
+## Preset definition example
+
+```python
+from norpagent.kernel.presets import Preset
+
+MY_PRESET = Preset(
+    name="my_mode",
+    description="custom mode",
+    model="openai_compat",           # any registered model name
+    tools=["file_read", "exec_cmd"], # any registered tool names
+    session="sqlite",                # session store (memory / sqlite)
+    sandbox="pooled",                # sandbox (subprocess / pooled)
+    scheduler="persistent",          # task scheduling (simple / persistent)
+    ui="web",                        # user interface (console / web)
+    components={                     # generic component assembly
+        "context_store": "fts5",
+        "project_manager": "basic",
+    },
+    params={
+        "max_steps": 32,
+        "temperature": 0.7,
+        "task_timeout": 0,           # task timeout in seconds (checked at round boundaries, 0 = unlimited)
+        "call_timeout": 60,          # hard timeout per model call in seconds (kills a blocked call, 0 = unlimited)
+        "workspace_root": ".",       # workspace root for file tools
+        "jailbreak_guard": True,     # jailbreak/injection interception
+        "harden_prompt": True,       # system prompt hardening
+    },
+)
+```
+
+### Timeouts (two levels)
+
+- `task_timeout`: task-level timeout, checked at round boundaries (the model call
+  is synchronous and blocking);
+- `call_timeout`: model-call-level **hard timeout**, mapped to the model API
+  request timeout. On timeout the main loop stops waiting and returns a `timeout`
+  result; the background request thread is marked cancelled
+  (`params["_cancel_event"]`, letting the adapter's streaming loop exit early)
+  and is reclaimed in `shutdown()`.
+
+## Plugin protocol (in-process)
+
+```python
+class MyPlugin:
+    name = "my_plugin"
+    version = "1.0.0"
+    publisher = "me"
+
+    def get_tools(self):            # register tools with the Agent
+        return [EchoTool()]
+
+    def get_hooks(self):            # subscribe to Agent lifecycle events
+        return {"on_task_done": self.on_done}
+
+    def on_done(self, event):
+        print("task done:", event.payload)
+```
+
+External (file) plugins are loaded through the `norpagent.plugins` loader and pass
+the signature verification / audit / import restriction / network policy / human
+approval security pipeline.
+
+## Security behavior
+
+- **Workspace path locking**: file tools require paths relative to the workspace
+  root; absolute paths, `..` traversal, and symlink escapes are rejected;
+- **SSRF protection**: web tools only allow public http/https; after DNS
+  resolution loopback/private/link-local addresses are rejected;
+- **Sandbox pool hard kill**: command timeout kills the entire process tree
+  (Windows taskkill /T, POSIX process-group SIGKILL); killed instances are not reused;
+- **Plugin security pipeline**: signature -> AST audit (including reflection
+  bypass detection) -> permission declaration -> import restriction;
+- **Jailbreak guard**: DAN/role override/restriction-removal pattern matching +
+  zero-width characters + Unicode homoglyphs + Base64 hidden instruction detection;
+- **PTC restricted execution**: `run_python` builtin whitelist + imports disabled.
+
+## Documentation
+
+| Document | Contents |
+|----------|----------|
+| [docs/hooks.md](docs/hooks.md) | 9 layers, 29 hooks: semantics, mutating hook return contracts, custom layers/hooks |
+| [docs/security.md](docs/security.md) | norpagent.safe(): three preset levels, SafetyKit API, kernel boundary |
+| [docs/presets.md](docs/presets.md) | standard/ptc/minimal/creative presets |
+| [docs/plugins.md](docs/plugins.md) | Plugin system: security pipeline, PluginSystem facade, process-level isolation |

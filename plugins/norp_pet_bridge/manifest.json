@@ -1,0 +1,20 @@
+{
+    "name": "NORP Pet Bridge",
+    "version": "2.1.0",
+    "publisher": "norp-pet",
+    "description": "桌面小伙伴已完整内嵌插件（pet_core）：启动自动唤出、退出自动回收、崩溃自愈；含养成系统（好感度/陪伴天数/名字自定义/节日问候）",
+    "entry": "plugin.py",
+    "enabled": true,
+    "permissions": [
+        "network",
+        "file_write"
+    ],
+    "signature": {
+        "algorithm": "ed25519",
+        "public_key": "eed0f67efa7eceb9d95fd7aa8c279c4939e1fdbf81ea010338ef7e2028b20286",
+        "signature": "29f4bff4ffdd6d13b0e0d0d4709ecb81ff277b75845c771d309b5db670cb27f84a0f734c1a5e051bb4c1a22a811fdeb858f831d431b754da96dff704065da20f",
+        "signed_files": [
+            "plugin.py"
+        ]
+    }
+}
