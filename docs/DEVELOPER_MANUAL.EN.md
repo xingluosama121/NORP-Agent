@@ -2,7 +2,7 @@
 
 > **Version**: 0.9.4 | **License**: Copyright (c) 2026 xingluosama121, MIT Licensed
 >
-> 2026-08 revision: Chapter 24 rescue mode (low-level loop control + human takeover) | kernel fix: select timeout clamp (found by the stress suite; far timers crashed the loop on Windows) | new 35-item violent stress suite for the minimal async-loop core (test/stress_nasyncio_core.py) | 15.6 human-rescue manual tool takeover API (v0.9.3; operate all tools by hand when the model is down: tools / tool-call / manual / serve) | 3.9 task-level slot injection (submit(slot_overrides=...)) | 3.7 in-flight task races of assembly-slot hot rebuilds and the drain recommendation | 4.6.4 daemon worker-pool queue semantics and the stuck-task fallback matrix | 23.1 EventBus benchmark baseline and lock-contention boundary
+> 2026-08 revision: Chapter 26 registration flow in detail (the Registry's 9 namespaces / four value forms and string semantics / the full npa() assembly pipeline / three registration timings and hot reload / slot registration vs component registration / validation and error handling / a checklist) | Chapter 25 developer practice (module / slot / plugin / tool development in depth; slot development contract incl. the hot-reload red line: dict key-value pairs must be valid modules; architecture overview and the minimal main async-loop core) | Chapter 24 rescue mode (low-level loop control + human takeover) | kernel fix: select timeout clamp (found by the stress suite; far timers crashed the loop on Windows) | new 35-item violent stress suite for the minimal async-loop core (test/stress_nasyncio_core.py) | 15.6 human-rescue manual tool takeover API (v0.9.3; operate all tools by hand when the model is down: tools / tool-call / manual / serve) | 3.9 task-level slot injection (submit(slot_overrides=...)) | 3.7 in-flight task races of assembly-slot hot rebuilds and the drain recommendation | 4.6.4 daemon worker-pool queue semantics and the stuck-task fallback matrix | 23.1 EventBus benchmark baseline and lock-contention boundary
 
 ---
 
@@ -13,7 +13,7 @@
 - [Chapter 3 Architecture Layer and Address Functions](#chapter-3-architecture-layer-and-address-functions)
 - [Chapter 4 Event Loop System: norpagent.nasyncio()](#chapter-4-event-loop-system-norpagentnasyncio)
 - [Chapter 5 Frontend Family](#chapter-5-frontend-family)
-- [Chapter 6 np() Startup and Lifecycle](#chapter-6-np-startup-and-lifecycle)
+- [Chapter 6 npa() Startup and Lifecycle](#chapter-6-npa-startup-and-lifecycle)
 - [Chapter 7 Models and Tools](#chapter-7-models-and-tools)
 - [Chapter 8 Sessions, Sandboxes, Schedulers, Context and Projects](#chapter-8-sessions-sandboxes-schedulers-context-and-projects)
 - [Chapter 9 The 9-Layer 29-Hook System](#chapter-9-the-9-layer-29-hook-system)
@@ -35,6 +35,8 @@
 - [Chapter 22 Web UI and Frontend Deep Dive](#chapter-22-web-ui-and-frontend-deep-dive)
 - [Chapter 23 Performance Design and Benchmarks](#chapter-23-performance-design-and-benchmarks)
 - [Chapter 24 Rescue Mode: Low-Level Loop Control and Human Takeover](#chapter-24-rescue-mode-low-level-loop-control-and-human-takeover)
+- [Chapter 25 Developer Practice: Modules, Slots, Plugins and Tools](#chapter-25-developer-practice-modules-slots-plugins-and-tools)
+- [Chapter 26 Registration Flow in Detail](#chapter-26-registration-flow-in-detail)
 - [Appendix D Glossary](#appendix-d-glossary)
 - [Appendix E 29-Hook Event Payload Quick Reference](#appendix-e-29-hook-event-payload-quick-reference)
 
@@ -62,12 +64,12 @@ pip install norpagent[all]          # everything
 ### 1.2 First Program
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np()                    # start with the default configuration (standard preset + Web frontend)
+npa()                    # start with the default configuration (standard preset + Web frontend)
 running = True
 while running:
-    if np.stop() == True:   # lifecycle function: exit when the application ends
+    if npa.stop() == True:   # lifecycle function: exit when the application ends
         running = False
 ```
 
@@ -80,35 +82,35 @@ Save it as `hello.py` and run; the console prints:
 
 Open the address in a browser to see the chat UI. See Chapter 6 for the startup flow. Two key points:
 
-1. **`np()` is a module-level call** — the `norpagent` module itself is callable, equivalent to `norpagent.launch()`;
-2. **`np.stop()` is a lifecycle function** — it returns `True` when the Agent application has ended and the main loop should exit.
+1. **`npa()` is a module-level call** — the `norpagent` module itself is callable, equivalent to `norpagent.launch()`;
+2. **`npa.stop()` is a lifecycle function** — it returns `True` when the Agent application has ended and the main loop should exit.
 
 ### 1.3 Single-Task Mode
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(prompt="explain in one sentence what an address function is")
+npa(prompt="explain in one sentence what an address function is")
 running = True
 while running:
-    if np.stop() == True:
+    if npa.stop() == True:
         running = False
 
-engine = np.current()
+engine = npa.current()
 print(engine.last_result.final_content)
 ```
 
-With `prompt` given: the Agent executes this single task and stops automatically (`np.stop()` becomes `True`);
-the result is stored in `np.current().last_result`.
+With `prompt` given: the Agent executes this single task and stops automatically (`npa.stop()` becomes `True`);
+the result is stored in `npa.current().last_result`.
 
 ### 1.4 Replacing the Frontend
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(prompt="hi", frontend="norpagent.frontends.headless:HeadlessFrontend")
+npa(prompt="hi", frontend="norpagent.frontends.headless:HeadlessFrontend")
 while True:
-    if np.stop():
+    if npa.stop():
         break
 ```
 
@@ -119,20 +121,20 @@ Component replacement is done by filling a new address into a slot, without modi
 
 | Usage | How |
 |---|---|
-| Start with the default configuration | `np()` |
-| Check whether the application has ended | `np.stop()` |
-| Single task | `np(prompt="...")` |
-| Specify a preset mode | `np(preset="standard")` |
-| Specify a model | `np(model="openai_compat")` |
-| Specify the event loop | `np(async_loop="myapp.loop:create")` |
-| Specify a frontend | `np(frontend="myapp.ui:create")` |
-| Specify session storage | `np(session="sqlite")` |
-| Specify the security level | `np(security="high")` |
-| Web port / language | `np(port=9000, language="zh_CN")` |
-| Custom main page | `np(html="/path/to/my.html")` |
-| Custom module flow page | `np(flow_html="/path/to/flow.html")` |
-| Frontend mounting an HTML path directly | `np(frontend="/path/to/my.html")` |
-| Instance / value | `np(async_loop=loop_instance)` | Mount an existing object directly |
+| Start with the default configuration | `npa()` |
+| Check whether the application has ended | `npa.stop()` |
+| Single task | `npa(prompt="...")` |
+| Specify a preset mode | `npa(preset="standard")` |
+| Specify a model | `npa(model="openai_compat")` |
+| Specify the event loop | `npa(async_loop="myapp.loop:create")` |
+| Specify a frontend | `npa(frontend="myapp.ui:create")` |
+| Specify session storage | `npa(session="sqlite")` |
+| Specify the security level | `npa(security="high")` |
+| Web port / language | `npa(port=9000, language="zh_CN")` |
+| Custom main page | `npa(html="/path/to/my.html")` |
+| Custom module flow page | `npa(flow_html="/path/to/flow.html")` |
+| Frontend mounting an HTML path directly | `npa(frontend="/path/to/my.html")` |
+| Instance / value | `npa(async_loop=loop_instance)` | Mount an existing object directly |
 
 String-address resolution rules (`norpagent.arch.address.resolve_address`):
 
@@ -152,7 +154,7 @@ Slot mounting parameter example (the `html` clause of the frontend slot):
 
 ```python
 # Replace the / route's default page with a custom HTML file (without physically overwriting library files)
-np(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
+npa(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
 ```
 
 ### 3.3 String Semantics
@@ -167,24 +169,24 @@ declares its own string semantics in its SlotSpec:
 | `name_or_address` | try by name first, then by address | model, session, sandbox, scheduler, ui, preset |
 | `literal` | string = literal value, address first | security (level), storage (path), hooks, plugins, logger, error_handler |
 
-Here: `"mock"` in `np(model="mock")` is a model name in the registry;
-the string in `np(model="myapp.model:create")` is an address.
-`np(session="sqlite")` references the built-in SQLite session component;
-`np(session="myapp.sessions:create")` loads a custom session implementation by address.
+Here: `"mock"` in `npa(model="mock")` is a model name in the registry;
+the string in `npa(model="myapp.model:create")` is an address.
+`npa(session="sqlite")` references the built-in SQLite session component;
+`npa(session="myapp.sessions:create")` loads a custom session implementation by address.
 
 **v0.9.1: all slots support address loading + values inside dict values support pure-address resolution**
 
 1. `name` / `name_or_address` slots: the string is looked up in the registry first;
    if not found it is loaded as a module address (`pkg.mod[:attr]`) — ui / preset have
-   been upgraded from plain `name` to `name_or_address`: `np(ui="myapp.render:create")`,
-   `np(preset="myapp.presets:build")` mount the implementation by address directly;
+   been upgraded from plain `name` to `name_or_address`: `npa(ui="myapp.render:create")`,
+   `npa(preset="myapp.presets:build")` mount the implementation by address directly;
 2. `literal` slots are "address first": a string **shaped like a pure address**
    (dotted identifier containing `.` or `:`, structurally judged by
    `norpagent.arch.address.is_address_like`) is loaded by address (resolution failure
    raises `AddressError`, no silent fallback); anything else keeps its literal value —
-   `np(security="high")` is still a level, `np(storage="./data")` is still a path,
-   while `np(security="myapp.sec:build_kit")` /
-   `np(storage="myapp.store:create;root=./x")` load by address;
+   `npa(security="high")` is still a level, `npa(storage="./data")` is still a path,
+   while `npa(security="myapp.sec:build_kit")` /
+   `npa(storage="myapp.store:create;root=./x")` load by address;
 3. **values inside dict values support pure-address resolution**: any slot's dict-form
    value is processed uniformly (tools mappings / hooks mappings / custom-slot dict
    values, nested dicts recurse): if a value is a pure-address string it is resolved
@@ -219,25 +221,25 @@ class MyLoop:
     def __init__(self):
         ...
 
-np(async_loop=MyLoop)
+npa(async_loop=MyLoop)
 
 # 2. factory function: declares config -> injected automatically
 def create(config=None, **kw):
     return MyLoop(timeout=float((config or {}).get("timeout", 0)))
 
-np(async_loop=create)
+npa(async_loop=create)
 
 # 3. string address + extra config clause
-np(async_loop="myapp.loop:create;timeout=5")
+npa(async_loop="myapp.loop:create;timeout=5")
 ```
 
 ### 3.5 ArchLayer: Observable Assembly Manifest
 
-Every `np()` internally builds an ArchLayer and `connect()`s it.
+Every `npa()` internally builds an ArchLayer and `connect()`s it.
 The assembly result is observable:
 
 ```python
-eng = np.current()
+eng = npa.current()
 print(eng.layer.describe())
 ```
 
@@ -259,11 +261,11 @@ declared default logic.
 ### 3.6 Example: Replacing Multiple Slots
 
 ```python
-import norpagent as np
+import norpagent as npa
 
 # model = openai_compat, session = sqlite, sandbox = pooled, frontend = Web (port 9000),
 # loop = custom implementation, security level = high. All specified via slot parameters.
-np(
+npa(
     preset="standard",
     model="openai_compat",              # name reference
     session="sqlite",                   # name reference
@@ -274,31 +276,31 @@ np(
 )
 
 while True:
-    if np.stop():
+    if npa.stop():
         break
 ```
 
 ### 3.7 Runtime Hot Mount: Any Slot Can Be Replaced
 
-After `np()` starts, **the engine keeps running**; replace any slot implementation at
+After `npa()` starts, **the engine keeps running**; replace any slot implementation at
 any time, no restart needed:
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np()                                        # start (default Web frontend)
+npa()                                        # start (default Web frontend)
 # ... application running ...
 
-np.remount(model="openai_compat")           # swap the model: takes effect on the next run
-np.remount(tools=["echo", "get_time"])      # swap the tool set: takes effect on the next run
-np.remount(session="sqlite")                # swap session storage: AgentRuntime hot rebuild
-np.remount(security="high")                 # swap the security level: old guard hooks unsubscribed first
-np.remount(frontend="norpagent.frontends.console:ConsoleFrontend")
-np.remount(async_loop="myapp.loop:create")  # swap the event loop: stop old, start new
-np.remount(model="myapp.model:create")      # replace a module file at runtime (hot reload)
+npa.remount(model="openai_compat")           # swap the model: takes effect on the next run
+npa.remount(tools=["echo", "get_time"])      # swap the tool set: takes effect on the next run
+npa.remount(session="sqlite")                # swap session storage: AgentRuntime hot rebuild
+npa.remount(security="high")                 # swap the security level: old guard hooks unsubscribed first
+npa.remount(frontend="norpagent.frontends.console:ConsoleFrontend")
+npa.remount(async_loop="myapp.loop:create")  # swap the event loop: stop old, start new
+npa.remount(model="myapp.model:create")      # replace a module file at runtime (hot reload)
 ```
 
-Underlying chain: `np.remount()` → `engine.remount()` → `ArchLayer.remount()`.
+Underlying chain: `npa.remount()` → `engine.remount()` → `ArchLayer.remount()`.
 Before re-resolving a string address, the **module cache and .pyc bytecode cache are
 invalidated**, so "edit the module file → remount" swaps in the changed code at runtime
 without restarting the process.
@@ -347,14 +349,14 @@ route page or the `/flow` module-flow page can be swapped at runtime — no proc
 restart, refresh the browser to see the new page:
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(html="front.html")                       # start and mount a custom main page
+npa(html="front.html")                       # start and mount a custom main page
 # ... edit front.html or switch to another page file ...
-np.remount(frontend="norpagent.frontends.web:WebFrontend;html=front.html")
+npa.remount(frontend="norpagent.frontends.web:WebFrontend;html=front.html")
 # the port stays the same; refreshing the browser (or reopening http://127.0.0.1:8787/) shows the new page
 
-np.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=flow.html")
+npa.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=flow.html")
 # swap the /flow module-flow orchestration page (the official mounting path for norp-flow.html)
 ```
 
@@ -366,36 +368,36 @@ parameters whose values differ from defaults (html / flow_html judged by the
 `_html` / `_flow_html` attributes). For example:
 
 ```python
-np.remount(frontend="norpagent.frontends.web:WebFrontend;port=9000")  # change the port (restart HTTP listening)
-np.remount(frontend="norpagent.frontends.web:WebFrontend;html=")      # reset the main page to the library built-in
-np.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=") # reset /flow to the library built-in
+npa.remount(frontend="norpagent.frontends.web:WebFrontend;port=9000")  # change the port (restart HTTP listening)
+npa.remount(frontend="norpagent.frontends.web:WebFrontend;html=")      # reset the main page to the library built-in
+npa.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=") # reset /flow to the library built-in
 from norpagent.frontends.web import WebFrontend
-np.remount(frontend=WebFrontend(html="front.html"))                   # instance form
-np.remount(frontend=WebFrontend(flow_html="flow.html"))               # instance form
-np.remount(frontend="front.html")     # HTML-path direct mount: equivalent to WebFrontend;html=front.html
+npa.remount(frontend=WebFrontend(html="front.html"))                   # instance form
+npa.remount(frontend=WebFrontend(flow_html="flow.html"))               # instance form
+npa.remount(frontend="front.html")     # HTML-path direct mount: equivalent to WebFrontend;html=front.html
 ```
 
 **remount page hot-replace keys (v0.9, the simpler page-swap entry)**: `html` /
 `flow_html` are not slots themselves but mounting parameters of the frontend slot —
-`np.remount()` accepts these two keys directly and swaps the page immediately via
+`npa.remount()` accepts these two keys directly and swaps the page immediately via
 `mount_page` **without going through "stop old frontend / start new frontend"**
 (the HTTP service is not restarted, the port stays the same; refresh the browser to
 see the new page):
 
 ```python
-np.remount(flow_html="flow-v2.html")       # /flow page swapped immediately (HTTP not restarted)
-np.remount(html="front-v2.html")           # / main page swapped immediately
-np.remount(flow_html="<html>...</html>")   # HTML content passed directly (leading "<" = content)
-np.remount(flow_html=None)                 # unmount, fall back to the library built-in norp-flow.html
-np.remount(flow_html="", html="")          # "" has the same semantics as None (unmount)
-np.remount(flow_html="flow-v2.html",
+npa.remount(flow_html="flow-v2.html")       # /flow page swapped immediately (HTTP not restarted)
+npa.remount(html="front-v2.html")           # / main page swapped immediately
+npa.remount(flow_html="<html>...</html>")   # HTML content passed directly (leading "<" = content)
+npa.remount(flow_html=None)                 # unmount, fall back to the library built-in norp-flow.html
+npa.remount(flow_html="", html="")          # "" has the same semantics as None (unmount)
+npa.remount(flow_html="flow-v2.html",
            frontend="norpagent.frontends.web:WebFrontend")  # composable: set parameters first, then swap the frontend
 ```
 
 Semantic details:
 
 1. the value is first written into `engine.params` (the same data path as the
-   `np(html=...)` startup passthrough); later frontend hot mounts / attach reuse the new value;
+   `npa(html=...)` startup passthrough); later frontend hot mounts / attach reuse the new value;
 2. when the current frontend is the Web frontend, the page is swapped immediately via
    `mount_page`; for non-Web frontends (console / headless) only the parameter is
    updated, with no side effects;
@@ -411,9 +413,9 @@ Semantic details:
 
 **Two mounting forms of the frontend slot (v0.9, equivalent coexistence)**:
 
-1. Address form: `np(frontend="norpagent.frontends.web:WebFrontend;html=...")`
+1. Address form: `npa(frontend="norpagent.frontends.web:WebFrontend;html=...")`
    — module address + clause parameters;
-2. HTML-path direct mount: `np(frontend="front.html")` — when the slot value itself
+2. HTML-path direct mount: `npa(frontend="front.html")` — when the slot value itself
    is a `.html/.htm` file path (with no `;` clause), the architecture layer no longer
    resolves it as a module address; the assembler automatically converts it to
    `WebFrontend(html=<that path>)`. A nonexistent file raises `ValueError` and fails
@@ -426,9 +428,9 @@ page use the `;flow_html=...` clause or `WebFrontend(flow_html=...)`.
 
 ```python
 # Way one: remount page hot-replace keys (recommended, v0.9)
-np.remount(flow_html="flow.html")           # /flow swapped immediately
-np.remount(html="front.html")               # / main page swapped immediately
-np.remount(flow_html=None)                  # unmount, fall back to the library built-in
+npa.remount(flow_html="flow.html")           # /flow swapped immediately
+npa.remount(html="front.html")               # / main page swapped immediately
+npa.remount(flow_html=None)                  # unmount, fall back to the library built-in
 
 # Way two: frontend instance API
 eng.frontend.mount_page("flow", "flow.html")   # /flow swapped immediately
@@ -443,7 +445,7 @@ caches are validated by the resource file's mtime/size signature — overwrite
 the browser to see the new page (no remount, no restart); on a cache hit only a
 single stat check runs, with no open+read disk I/O.
 
-Notes: `np.remount()` is an **in-process API**; it must be called in the same Python
+Notes: `npa.remount()` is an **in-process API**; it must be called in the same Python
 process that started the engine (it does not work across processes). When running in
 cmd, put the remount inside the lifecycle loop or start a thread reading stdin to
 implement "type a command to swap the page".
@@ -462,10 +464,10 @@ Notes:
 
 ### 3.8 Hot-Pluggable Slot Table: Registering Custom Slots
 
-`np.remount()` swaps a slot's **implementation**; the slot table itself (`SLOT_SPECS`)
+`npa.remount()` swaps a slot's **implementation**; the slot table itself (`SLOT_SPECS`)
 is also hot-pluggable — third-party libraries can register **brand-new custom slots**
-at runtime, and registration plugs into the full pipeline (`np()` parameter validation,
-ArchLayer assembly, `np.remount()` hot replacement, `layer.describe()` listing) with no
+at runtime, and registration plugs into the full pipeline (`npa()` parameter validation,
+ArchLayer assembly, `npa.remount()` hot replacement, `layer.describe()` listing) with no
 framework-source changes and no process restart:
 
 ```python
@@ -473,7 +475,7 @@ from norpagent.arch import SlotSpec, register_slot, unregister_slot
 
 # custom slot = name + string semantics + application logic (applier)
 register_slot(SlotSpec(
-    name="audit_tag",                # slot name = np()'s keyword-argument name
+    name="audit_tag",                # slot name = npa()'s keyword-argument name
     description="audit tag",
     protocol="literal string",
     string_semantics="literal",      # address / name / name_or_address / literal
@@ -482,10 +484,10 @@ register_slot(SlotSpec(
 ```
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(audit_tag="release-1")            # applied at assembly time
-np.remount(audit_tag="release-2")    # hot-replaced at runtime (the applier re-runs)
+npa(audit_tag="release-1")            # applied at assembly time
+npa.remount(audit_tag="release-2")    # hot-replaced at runtime (the applier re-runs)
 ```
 
 The `applier(reg, layer, value, params, ctx)` contract:
@@ -497,7 +499,7 @@ The `applier(reg, layer, value, params, ctx)` contract:
   declarations {kind: name}), `extras` (engine extra objects, consumed via
   `engine.extras[slot_name]`), `overrides` (preset-field overrides), `meta`
   (registry architecture metadata recording mountable/unsubscribable objects);
-- **the same registry may be called repeatedly** (assembly + every `np.remount`), so
+- **the same registry may be called repeatedly** (assembly + every `npa.remount`), so
   the applier must be reentrancy-safe: repeated runs must not stack side effects —
   objects subscribed to the event bus are unsubscribed per `ctx["meta"]` records and
   then remounted (see the built-in hooks / security / plugins slots);
@@ -530,40 +532,40 @@ register_slot(SlotSpec(
     remount_rebuild_agent=True,     # hot rebuild after hot replacement; the component takes effect immediately
 ))
 
-np(vector_store=MyVectorStore())    # assembly: engine.agent.components["vector_store"]
-np.remount(vector_store=Other())    # hot replacement: AgentRuntime hot rebuild
+npa(vector_store=MyVectorStore())    # assembly: engine.agent.components["vector_store"]
+npa.remount(vector_store=Other())    # hot replacement: AgentRuntime hot rebuild
 ```
 
 Protection and validation rules:
 
 | Rule | Note |
 |---|---|
-| The 18 built-in slots are protected | cannot be registered / spec-overridden / unregistered (framework structural contract: engine, frontend, documentation references). Their **values** can be hot-replaced with `np.remount` at any time |
-| Slot-name legality | a legal Python identifier (`np()` keyword argument), not a keyword, not `prompt` / `config` (launch special keys) |
+| The 18 built-in slots are protected | cannot be registered / spec-overridden / unregistered (framework structural contract: engine, frontend, documentation references). Their **values** can be hot-replaced with `npa.remount` at any time |
+| Slot-name legality | a legal Python identifier (`npa()` keyword argument), not a keyword, not `prompt` / `config` (launch special keys) |
 | Duplicate names | raise `SlotError`; `register_slot(spec, replace=True)` hot-replaces the spec of a same-named custom slot (default address / semantics / applier / rebuild flag) |
 | Illegal specs | a non-callable applier or an illegal `string_semantics` raises `SlotError`; a failed replace does not break the old spec |
-| Unregister | `unregister_slot(name)` unregisters a custom slot and returns its spec; afterwards `np.remount(that_slot)` reports an unknown slot and `np(that_key=...)` falls back to a task parameter; already-mounted implementations stay as they are |
-| Late registration | slots registered after the engine started: `layer.connect()` idempotently fills in (only connects missing slots), or directly `np.remount(slot=value)` goes through the full pipeline |
+| Unregister | `unregister_slot(name)` unregisters a custom slot and returns its spec; afterwards `npa.remount(that_slot)` reports an unknown slot and `npa(that_key=...)` falls back to a task parameter; already-mounted implementations stay as they are |
+| Late registration | slots registered after the engine started: `layer.connect()` idempotently fills in (only connects missing slots), or directly `npa.remount(slot=value)` goes through the full pipeline |
 
-Top-level API: `np.register_slot` / `np.unregister_slot` /
-`np.SlotSpec` / `np.SLOT_SPECS` / `np.is_builtin_slot` /
-`np.snapshot_slots`; slot-table operations are thread-safe (RLock-protected; assembly
+Top-level API: `npa.register_slot` / `npa.unregister_slot` /
+`npa.SlotSpec` / `npa.SLOT_SPECS` / `npa.is_builtin_slot` /
+`npa.snapshot_slots`; slot-table operations are thread-safe (RLock-protected; assembly
 and hot mounts iterate over snapshots).
 
 ---
 
 ### 3.9 Task-Level Slot Injection: submit(slot_overrides=...)
 
-`np()` startup assembly and `np.remount()` hot mounts are both **global** dimensions:
+`npa()` startup assembly and `npa.remount()` hot mounts are both **global** dimensions:
 one change affects all subsequent tasks. Task-level slot injection is the third
 dimension — temporarily overriding any slot implementation for the duration of a
 **single task**, without affecting global configuration and without blocking other
 in-flight tasks:
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-engine = np(preset="standard")
+engine = npa(preset="standard")
 
 # single task: temporarily swap the model + tools
 r = engine.submit(
@@ -580,8 +582,8 @@ r = engine.submit(
 #### 3.9.1 Syntax and the Full Key Set
 
 `engine.submit(text, session_id=None, task_params=None, slot_overrides=None)`
-(the top-level `np.submit(...)` supports the same). The keys of `slot_overrides`
-match `np()`'s slot parameters exactly (14 task-overridable keys):
+(the top-level `npa.submit(...)` supports the same). The keys of `slot_overrides`
+match `npa()`'s slot parameters exactly (14 task-overridable keys):
 
 | Key | Task-level semantics | Takes effect |
 |---|---|---|
@@ -597,32 +599,32 @@ match `np()`'s slot parameters exactly (14 task-overridable keys):
 | `async_loop` | this task executes on a standalone temporary event loop (no contention with the main loop's worker pool) | this task |
 | `logger` / `storage` / `error_handler` | injected into this task's parameter context (params), readable by component factories and hooks (see 3.9.5) | this run |
 
-Value forms match `np()` slots exactly: registered-name references / module addresses
+Value forms match `npa()` slots exactly: registered-name references / module addresses
 (`pkg.mod[:attr]`, including `;key=value` clauses) / factories / instances; resolution
 failure raises `AddressError`.
 
 **Non-slot keys automatically fall back to task parameters**: when a key in
 `slot_overrides` is not among the 14 keys above (e.g. `max_steps` / `task_timeout` /
 `mock_script`), it is automatically merged into `task_params` and passed through to
-the agent loop — the same data path as `np()`'s "slot-key split, the rest pass through
+the agent loop — the same data path as `npa()`'s "slot-key split, the rest pass through
 as parameters", so `slot_overrides={"max_steps": 64}` works out of the box.
 
 **Keys that cannot be task-level overridden**: `frontend` / `ui` / `plugins` / `preset`
 are process-level or engine-level structures (the I/O shell, the renderer, the plugin
 loader, the component-composition baseline) and fall outside a single task's override
 boundary; passing them falls back to task parameters (no error, but also no slot-override
-effect — use `np.remount` instead).
+effect — use `npa.remount` instead).
 
 #### 3.9.2 Priority: Task-Level > remount > Startup Assembly > Preset
 
 | Level | Source | Priority |
 |---|---|---|
 | 1 | `submit(slot_overrides=...)` | highest |
-| 2 | `np.remount(slot=...)` | second |
-| 3 | startup `np(slot=...)` | third |
+| 2 | `npa.remount(slot=...)` | second |
+| 3 | startup `npa(slot=...)` | third |
 | 4 | preset declarations | lowest |
 
-Task-level overrides take a **snapshot at submit() time**; later global `np.remount`
+Task-level overrides take a **snapshot at submit() time**; later global `npa.remount`
 does not affect in-flight tasks (3.9.3). This complements "Drain + remount": if you
 do not want to wait for draining, override; if you do not want to override, drain and
 then remount.
@@ -745,28 +747,28 @@ they are interrupted, and how they are woken up. NorpAgent provides the loop sys
 as an independent architecture function:
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-loop = np.nasyncio()                       # default loop (self-developed nasyncio core)
-loop = np.nasyncio("myapp.loop:create")    # custom loop
+loop = npa.nasyncio()                       # default loop (self-developed nasyncio core)
+loop = npa.nasyncio("myapp.loop:create")    # custom loop
 ```
 
 It is equivalent to the slot:
 
 ```python
-np(async_loop="myapp.loop:create")   # equivalent to np.nasyncio("myapp.loop:create")
+npa(async_loop="myapp.loop:create")   # equivalent to npa.nasyncio("myapp.loop:create")
 ```
 
-`np.nasyncio()` returns a **LoopRuntime** (protocol below). The scheduling core run
+`npa.nasyncio()` returns a **LoopRuntime** (protocol below). The scheduling core run
 by the default implementation is the library's built-in **self-developed nasyncio
 event loop** (`norpagent.nasyncio`, originally nasync_io, now packaged into the
 library) — it **does not depend on or import the standard asyncio** (declaration and
 reasons in 4.7). To use another event-loop implementation, implement the LoopRuntime
 protocol and fill the `async_loop` slot with an address — no framework core changes.
 
-> The top-level `norpagent.nasyncio` (i.e. `np.nasyncio`) binds to the self-developed
-> core **module** (callable): `np.nasyncio()` returns the default LoopRuntime
-> implementation; `np.nasyncio.EventLoop` / `Future` / `Task` directly access core
+> The top-level `norpagent.nasyncio` (i.e. `npa.nasyncio`) binds to the self-developed
+> core **module** (callable): `npa.nasyncio()` returns the default LoopRuntime
+> implementation; `npa.nasyncio.EventLoop` / `Future` / `Task` directly access core
 > types; `import norpagent.nasyncio` yields the same core module. The architecture
 > function itself lives in `norpagent.loops.nasyncio`.
 
@@ -801,13 +803,13 @@ Configuration (embedded / high-concurrency tuning; see Chapter 14):
 | `max_workers` | daemon worker-pool thread count | `max(4, cpu_count)` |
 | `poll_interval` | submit/run_async completion-poll interval (s) | `0.05` |
 
-Passed via `np(config={"loop": {"max_workers": 8}})` (or the environment variables
+Passed via `npa(config={"loop": {"max_workers": 8}})` (or the environment variables
 `NORPAGENT_MAX_WORKERS` / `NORPAGENT_SUBMIT_POLL`; equivalent forms
-`np.nasyncio(max_workers=8)` and `np(async_loop="norpagent.loops.nasyncio:NasyncioLoopRuntime")`
+`npa.nasyncio(max_workers=8)` and `npa(async_loop="norpagent.loops.nasyncio:NasyncioLoopRuntime")`
 share the same construction source).
 
 ```python
-loop = np.nasyncio()
+loop = npa.nasyncio()
 loop.start()
 result = loop.submit(lambda: 1 + 1)   # -> 2
 loop.stop()
@@ -851,12 +853,12 @@ def create(**kw):                    # module-level factory (the address "myapp.
 Mount it:
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(async_loop="myapp.simple_loop", prompt="hi",
+npa(async_loop="myapp.simple_loop", prompt="hi",
    frontend="norpagent.frontends.headless:HeadlessFrontend")
 while True:
-    if np.stop():
+    if npa.stop():
         break
 ```
 
@@ -891,7 +893,7 @@ threading.Event set"; the loop thread is not a necessary link in the wakeup path
 
 #### 4.6.1 The Problem: the main thread is not inside the event-loop entry, so why might Ctrl+C fail
 
-After `np()` starts, the main thread only does lifecycle polling (`np.stop()`); the
+After `npa()` starts, the main thread only does lifecycle polling (`npa.stop()`); the
 real worker threads execute tasks in the background, and the caller (e.g. the console
 REPL's main thread) blocks on `loop.submit()`'s wait. Two pitfalls on the signal chain:
 
@@ -1072,11 +1074,11 @@ asyncio); historical code keeps working. New code uses
 `norpagent.loops.nasyncio:NasyncioLoopRuntime` (see 4.3).
 
 ```python
-import norpagent as np
+import norpagent as npa
 import norpagent.nasyncio as core  # self-developed core module (callable)
 
 print(core.__version__)          # 2.0.0
-loop_rt = np.nasyncio()          # default LoopRuntime implementation (same as core())
+loop_rt = npa.nasyncio()          # default LoopRuntime implementation (same as core())
 print(loop_rt.name)              # nasyncio
 print(core.EventLoop)            # self-developed event-loop class
 ```
@@ -1111,7 +1113,7 @@ class Frontend(Protocol):
 
 | Frontend | Address | Notes |
 |---|---|---|
-| Web (default) | `norpagent.frontends.web:WebFrontend` | HTTP + SSE, no third-party dependencies; page = front.html (multi-tab sessions / streaming render / settings / plugin panels), independent entry `/flow` = norp-flow.html module-flow orchestration; the console prints `listening on http://127.0.0.1:8787/`; configurable via `;port=9000`, `;html=custom main page`, `;flow_html=custom flow page` (slot mounting parameters, see 5.4) or `np(port=9000, language="zh_CN")`; the frontend slot value can be a `.html` path directly (HTML-path direct mount, v0.9) |
+| Web (default) | `norpagent.frontends.web:WebFrontend` | HTTP + SSE, no third-party dependencies; page = front.html (multi-tab sessions / streaming render / settings / plugin panels), independent entry `/flow` = norp-flow.html module-flow orchestration; the console prints `listening on http://127.0.0.1:8787/`; configurable via `;port=9000`, `;html=custom main page`, `;flow_html=custom flow page` (slot mounting parameters, see 5.4) or `npa(port=9000, language="zh_CN")`; the frontend slot value can be a `.html` path directly (HTML-path direct mount, v0.9) |
 | Console REPL | `norpagent.frontends.console:ConsoleFrontend` | explicit opt-in; `/exit` (or `exit`/`quit`/`exit()`) exits, `/reset` starts a new session; switches to synchronous mode automatically inside the Python interactive interpreter |
 | Headless | `norpagent.frontends.headless:HeadlessFrontend` | pure API; default in `prompt` mode; output (body / tools / results) prints to stdout |
 
@@ -1132,7 +1134,7 @@ Web UI behaviors and configuration:
 | event routing | event sid resolution prefers the original browser-session id registered by `submit()`; the session manager supports creating with a specified id (`create_session(title=..., session_id=...)`); when the kernel resumes a session the id matches the browser tab |
 
 ```python
-import norpagent as np
+import norpagent as npa
 from norpagent.builtin.ui.web import WebUI
 from norpagent.frontends.web import WebFrontend
 
@@ -1145,25 +1147,25 @@ ui2 = WebUI(port=9000, config_path=None)
 **Page mounting (html / flow_html params) — four equivalent forms:**
 
 ```python
-import norpagent as np
+import norpagent as npa
 
 # 1. slot-address clause (;key=value, recommended)
-np(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
-np(frontend="norpagent.frontends.web:WebFrontend;flow_html=/path/to/flow.html")
+npa(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
+npa(frontend="norpagent.frontends.web:WebFrontend;flow_html=/path/to/flow.html")
 
 # 2. constructor params directly (both WebFrontend / WebUI support)
-np(frontend=WebFrontend(html="<html><body>my UI</body></html>"))
-np(frontend=WebFrontend(flow_html="/path/to/flow.html"))
+npa(frontend=WebFrontend(html="<html><body>my UI</body></html>"))
+npa(frontend=WebFrontend(flow_html="/path/to/flow.html"))
 
 # 3. config dict
-np(config={"web": {"html": "/path/to/my.html", "flow_html": "/path/to/flow.html"}})
+npa(config={"web": {"html": "/path/to/my.html", "flow_html": "/path/to/flow.html"}})
 
 # 4. runtime-parameter passthrough
-np(html="/path/to/my.html", flow_html="/path/to/flow.html")
+npa(html="/path/to/my.html", flow_html="/path/to/flow.html")
 
 # 5. HTML-path direct mount (v0.9): the frontend slot value itself is a .html path,
 #    equivalent to form 1's html= clause
-np(frontend="/path/to/my.html")
+npa(frontend="/path/to/my.html")
 
 # a nonexistent file path errors at construction (fast fail, no silent fallback to the default page)
 # ValueError: WebUI html mount parameter is neither HTML content (starts with '<') nor an existing file: ...
@@ -1172,12 +1174,12 @@ np(frontend="/path/to/my.html")
 **Hot-swapping pages at runtime (HTTP service not restarted, port unchanged):**
 
 ```python
-eng = np()                                  # or np.current() to get the running engine
+eng = npa()                                  # or npa.current() to get the running engine
 
 # way one: remount page hot-replace keys (recommended, v0.9)
-np.remount(flow_html="/path/to/flow.html")  # /flow swapped immediately
-np.remount(html="/path/to/front.html")      # / main page swapped immediately
-np.remount(flow_html=None)                  # unmount, fall back to the library built-in
+npa.remount(flow_html="/path/to/flow.html")  # /flow swapped immediately
+npa.remount(html="/path/to/front.html")      # / main page swapped immediately
+npa.remount(flow_html=None)                  # unmount, fall back to the library built-in
 
 # way two: frontend instance API
 eng.frontend.mount_page("flow", "/path/to/flow.html")  # /flow swapped immediately
@@ -1199,7 +1201,7 @@ implementing all methods, translating library events into the text-event protoco
 T:/R:/C:/U:/E:/Q:); the desktop host stays compatible as-is. Mount directly:
 
 ```python
-np(html="front.html")   # relative to the working directory; the library reads it as a file path
+npa(html="front.html")   # relative to the working directory; the library reads it as a file path
 ```
 
 After mounting, chat / sessions / settings / plugin panels / file browsing all go
@@ -1260,13 +1262,13 @@ class TrayFrontend:
 Mount and drive it:
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(frontend="myapp.tray_frontend:TrayFrontend", preset="standard")
-fe = np.current().frontend
+npa(frontend="myapp.tray_frontend:TrayFrontend", preset="standard")
+fe = npa.current().frontend
 result = fe.send("hello")        # the engine executes the Agent in the background loop
 print(result.final_content)
-np.shutdown()
+npa.shutdown()
 ```
 
 ### 5.6 The UIAdapter Renderer Layer
@@ -1279,7 +1281,7 @@ class UIAdapter(Protocol):
     def notify(self, message, level="info") -> None: ...
 ```
 
-Swap renderers: `np(ui=MyRenderer())` or `np(ui="web")` (reference a registered name).
+Swap renderers: `npa(ui=MyRenderer())` or `npa(ui="web")` (reference a registered name).
 
 ### 5.7 Module-Flow Canvas (FLOW) and FE Frontend Modules
 
@@ -1377,20 +1379,20 @@ immediate request (no need to save first); clicking outside does not close it
 
 ---
 
-## Chapter 6 np() Startup and Lifecycle
+## Chapter 6 npa() Startup and Lifecycle
 
 ### 6.1 Reading the Startup Code
 
 ```python
-import norpagent as np
-np()                    # ①
+import norpagent as npa
+npa()                    # ①
 running = True
 while running:
-    if np.stop() == True:   # ②
+    if npa.stop() == True:   # ②
         running = False
 ```
 
-① `np()` — the `norpagent` module is callable (module-class replacement). It is
+① `npa()` — the `norpagent` module is callable (module-class replacement). It is
 equivalent to `norpagent.launch()`, which internally does, in order:
 
 1. **parameter sorting**: keyword arguments whose names match the slot table (the 18
@@ -1406,10 +1408,10 @@ equivalent to `norpagent.launch()`, which internally does, in order:
 4. **engine start**: `NorpEngine(layer, registry, preset, loop, frontend, ...)`
    → `engine.start()`: assemble the agent runtime → bind the frontend → start the
    loop thread → start the frontend thread → enter RUNNING;
-5. **singleton semantics**: when an engine is already running, another `np()` returns
+5. **singleton semantics**: when an engine is already running, another `npa()` returns
    the current engine directly.
 
-② `np.stop()` — the lifecycle function. Returns `True` when the engine has entered
+② `npa.stop()` — the lifecycle function. Returns `True` when the engine has entered
 STOPPED (the application has ended; the main loop should exit); also returns `True`
 when there is no engine.
 
@@ -1421,10 +1423,10 @@ STARTING ──start()──▶ RUNNING ──request_stop()──▶ STOPPING �
 
 | State | Meaning | Entry condition |
 |---|---|---|
-| STARTING | assembling | inside `np()` |
+| STARTING | assembling | inside `npa()` |
 | RUNNING | accepts input, executes tasks | `engine.start()` finished |
 | STOPPING | winding down | `request_stop()` |
-| STOPPED | finished | wind-down complete (`np.stop()` is True) |
+| STOPPED | finished | wind-down complete (`npa.stop()` is True) |
 
 Stop-request wind-down order (`NorpEngine.request_stop`):
 
@@ -1440,53 +1442,53 @@ Stop-request wind-down order (`NorpEngine.request_stop`):
 **Main-loop mode** (default Web frontend):
 
 ```python
-np()                            # default frontend = Web (frontend web listening on 127.0.0.1:8787)
+npa()                            # default frontend = Web (frontend web listening on 127.0.0.1:8787)
 while True:
-    if np.stop():
+    if npa.stop():
         break
 ```
 
 Open the printed address in a browser to see the chat UI (front.html). With other
 frontends, specify explicitly:
-`np(frontend="norpagent.frontends.console:ConsoleFrontend")`.
+`npa(frontend="norpagent.frontends.console:ConsoleFrontend")`.
 
 **Single-task mode** (when `prompt` is given, the headless frontend is used
 automatically and output prints to stdout):
 
 ```python
-np(prompt="summarize README", preset="standard")
+npa(prompt="summarize README", preset="standard")
 while True:
-    if np.stop():
+    if npa.stop():
         break
-print(np.current().last_result.final_content)
+print(npa.current().last_result.final_content)
 ```
 
 **Pure-API mode** (headless + programmatic submit):
 
 ```python
-np(preset="minimal", frontend="norpagent.frontends.headless:HeadlessFrontend")
-eng = np.current()
+npa(preset="minimal", frontend="norpagent.frontends.headless:HeadlessFrontend")
+eng = npa.current()
 result1 = eng.submit("first question")
 result2 = eng.submit("follow-up", session_id=result1.session_id)   # continue the same session
 eng.request_stop()
 ```
 
-> **Note**: `np()` does not block; the engine runs on background threads. The main
-> thread should poll with `np.stop()` (or call `np.current().wait()`). If the main
+> **Note**: `npa()` does not block; the engine runs on background threads. The main
+> thread should poll with `npa.stop()` (or call `npa.current().wait()`). If the main
 > thread simply ends the process, the daemon engine threads exit with it; the library
 > registers an atexit fallback cleanup.
 >
-> **Special case**: with the **console frontend** explicitly selected, calling `np()`
+> **Special case**: with the **console frontend** explicitly selected, calling `npa()`
 > inside the Python interactive interpreter (`>>>` REPL) automatically switches to
-> **synchronous mode** — `np()` blocks until the user exits (`/exit`, `exit()`,
+> **synchronous mode** — `npa()` blocks until the user exits (`/exit`, `exit()`,
 > Ctrl+C or EOF); no polling loop needed during that time. In synchronous mode the
 > main thread owns stdin exclusively. The default Web frontend also works in the REPL
 > (background service + page interaction, without blocking the interpreter).
 
-### 6.4 The Full np() Parameter Set
+### 6.4 The Full npa() Parameter Set
 
 ```python
-np(
+npa(
     # -- architecture slots (18 built-in; empty = default logic; custom slots
     #    registered via register_slot take parameters here too, see 3.8) --
     async_loop=..., agent_runtime=..., model=..., tools=...,
@@ -1520,7 +1522,7 @@ Sub-key conventions of the `config` dict (0.9, embedded / high-concurrency tunin
 see Chapter 14):
 
 ```python
-np(config={
+npa(config={
     "loop": {"max_workers": 8, "poll_interval": 0.02},   # loop worker pool and polling
     "web": {"port": 9000, "sse_queue_size": 2048,        # Web UI and SSE backpressure
             "sse_queue_policy": "drop_oldest"},
@@ -1541,7 +1543,7 @@ The engine state machine aligns with the L1 layer of the 9-layer hook system:
 | task submitted | `on_task_start` |
 | engine stopped | `on_agent_shutdown` (L1) |
 
-Lifecycle subscription: `np(hooks={"on_agent_init": fn, ...})`
+Lifecycle subscription: `npa(hooks={"on_agent_init": fn, ...})`
 (the hook system is in Chapter 9).
 
 ---
@@ -1553,9 +1555,9 @@ Lifecycle subscription: `np(hooks={"on_agent_init": fn, ...})`
 The model slot accepts:
 
 ```python
-np(model="mock")                  # registry name (built-in mock / openai_compat / anthropic)
-np(model=MyProvider())            # instance
-np(model="myapp.model:create")    # address (resolved as an address when the string matches no registered name)
+npa(model="mock")                  # registry name (built-in mock / openai_compat / anthropic)
+npa(model=MyProvider())            # instance
+npa(model="myapp.model:create")    # address (resolved as an address when the string matches no registered name)
 ```
 
 The ModelProvider protocol (`norpagent.protocols.model`):
@@ -1576,9 +1578,9 @@ accordingly (paired with the hard timeout).
 Three assignment forms:
 
 ```python
-np(tools=["echo", "get_time"])           # name list: registry references
-np(tools={"my_tool": MyTool()})          # mapping: register and enable
-np(tools=[ToolA(), ToolB()])             # instance list: registered by name
+npa(tools=["echo", "get_time"])           # name list: registry references
+npa(tools={"my_tool": MyTool()})          # mapping: register and enable
+npa(tools=[ToolA(), ToolB()])             # instance list: registered by name
 ```
 
 The Tool protocol (`norpagent.protocols.tool`):
@@ -1603,17 +1605,17 @@ The minimal preset uses a deterministic environment and the smallest tool set,
 suitable for comparing different models' outputs on a fixed input set:
 
 ```python
-import norpagent as np
+import norpagent as npa
 
 for model_name in ("mock", "openai_compat"):
-    np(preset="minimal", model=model_name, prompt="1+1=?",
+    npa(preset="minimal", model=model_name, prompt="1+1=?",
        frontend="norpagent.frontends.headless:HeadlessFrontend")
     while True:
-        if np.stop():
+        if npa.stop():
             break
-    r = np.current().last_result
+    r = npa.current().last_result
     print(model_name, r.steps, r.usage.total_tokens, r.final_content[:40])
-    np.shutdown()
+    npa.shutdown()
 ```
 
 ---
@@ -1623,17 +1625,17 @@ for model_name in ("mock", "openai_compat"):
 ### 8.1 Sessions
 
 ```python
-np(session="memory")     # in-process (default)
-np(session="sqlite")     # persisted to ~/.norpagent/sessions.db
-np(session=MySessionManager())          # instance
-np(session="myapp.sessions:create")     # address
+npa(session="memory")     # in-process (default)
+npa(session="sqlite")     # persisted to ~/.norpagent/sessions.db
+npa(session=MySessionManager())          # instance
+npa(session="myapp.sessions:create")     # address
 ```
 
 SessionManager protocol: `create_session / get_session / append_message /
 history`. Continue a conversation across sessions via `session_id`:
 
 ```python
-eng = np.current()
+eng = npa.current()
 r1 = eng.submit("remember: my favorite color is blue")
 r1 = eng.submit("remember: my favorite color is blue")
 r2 = eng.submit("what is my favorite color?", session_id=r1.session_id)
@@ -1642,9 +1644,9 @@ r2 = eng.submit("what is my favorite color?", session_id=r1.session_id)
 ### 8.2 Sandboxes
 
 ```python
-np(sandbox="subprocess")   # child process (default)
-np(sandbox="pooled")       # pooled reuse + concurrency cap + timeout force-kill of the process tree
-np(sandbox="myapp.docker_sandbox:create")
+npa(sandbox="subprocess")   # child process (default)
+npa(sandbox="pooled")       # pooled reuse + concurrency cap + timeout force-kill of the process tree
+npa(sandbox="myapp.docker_sandbox:create")
 ```
 
 Sandbox protocol: `run / close`. The `exec_cmd` tool executes through the sandbox
@@ -1654,8 +1656,8 @@ changes.
 ### 8.3 Schedulers
 
 ```python
-np(scheduler="simple")       # in-memory queue (default)
-np(scheduler="persistent")   # persistent + crash resume() continuation
+npa(scheduler="simple")       # in-memory queue (default)
+npa(scheduler="persistent")   # persistent + crash resume() continuation
 ```
 
 TaskScheduler protocol: `submit / drain / cancel`. The `task_*` tool family lets the
@@ -1666,8 +1668,8 @@ different child agents).
 ### 8.4 Context Store and Project Management (the generic-component namespace)
 
 ```python
-np(context_store="norpagent.builtin.context:FTS5ContextStore")
-np(project_manager=MyProjectManager())
+npa(context_store="norpagent.builtin.context:FTS5ContextStore")
+npa(project_manager=MyProjectManager())
 ```
 
 These two slots use the **generic-component namespace**
@@ -1677,9 +1679,9 @@ kinds and declare them in presets without modifying the kernel.
 ### 8.5 Base-Service Slots
 
 ```python
-np(logger=logging.getLogger("my.app"))       # logging
-np(storage="./my_data")                       # persistence root
-np(error_handler=lambda exc, eng: print(exc))  # last line of defense for errors
+npa(logger=logging.getLogger("my.app"))       # logging
+npa(storage="./my_data")                       # persistence root
+npa(error_handler=lambda exc, eng: print(exc))  # last line of defense for errors
 ```
 
 `error_handler` is called on task-level exception fallback (signature
@@ -1757,7 +1759,7 @@ before_model_call.subscribe(log_request, system=reg)    # specify a Registry
 # 2. runtime view: same bus as registry.hooks (recommended for multiple instances)
 agent.hooks.before_model_call.subscribe(log_request)
 
-# 3. slot bulk subscription: np(hooks={"before_model_call": my_fn})
+# 3. slot bulk subscription: npa(hooks={"before_model_call": my_fn})
 ```
 
 - The module-level `Hook` object's `subscribe / unsubscribe / emit / intercept`
@@ -1765,15 +1767,15 @@ agent.hooks.before_model_call.subscribe(log_request)
   Registry / AgentRuntime` (unified resolution via `_resolve_bus`);
   **by default it lands on the process-level default system**
   (`hooks.get_default_system()`, with its own private bus) — it is NOT the same bus
-  as the `np()` engine's. When using a standalone Registry, **always pass `system`
+  as the `npa()` engine's. When using a standalone Registry, **always pass `system`
   explicitly** (every Registry carries a private bus, guaranteeing multi-instance
   isolation); otherwise the subscription hangs on the default system and never
   receives engine events;
 - `agent.hooks.before_model_call` returns a `BoundHook` (bound to that engine's
   bus); its four methods no longer need `system`;
-- the `np(hooks={...})` slot (literal semantics): dict keys are event names, values
+- the `npa(hooks={...})` slot (literal semantics): dict keys are event names, values
   are subscribers, mounted on the engine bus at assembly time; hot-mounting
-  `np.remount(hooks=...)` unsubscribes the previous architecture-level subscriptions
+  `npa.remount(hooks=...)` unsubscribes the previous architecture-level subscriptions
   first and then remounts — **never stacking**. The slot value can also be a
   `callable(reg)` factory: called first, then the returned dict is subscribed.
 
@@ -1924,7 +1926,7 @@ over entirely (skipping hooks); you can also replace the whole loop class via th
   unsubscribing while running is safe (3.7's hot mount relies on this);
 - when you need intervention but do not want a global subscription: write the logic
   as a standalone function, gated by explicit task-level params (e.g.
-  jailbreak_guard / harden_prompt, see 10.4), or use the `np(hooks=...)` slot to
+  jailbreak_guard / harden_prompt, see 10.4), or use the `npa(hooks=...)` slot to
   subscribe on a specific engine only.
 
 ---
@@ -1939,12 +1941,12 @@ over entirely (skipping hooks); you can also replace the whole loop class via th
 ### 10.1 How to Enable
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-# 1. np() slot form
-np(security="high")                                  # string: runtime policy only, zero hook intervention
-np(security={"level": "high", "hooks": True})        # dict: + explicit hook intervention
-np(security=lambda reg: safe(reg, config={...}))     # callable: fully custom assembly
+# 1. npa() slot form
+npa(security="high")                                  # string: runtime policy only, zero hook intervention
+npa(security={"level": "high", "hooks": True})        # dict: + explicit hook intervention
+npa(security=lambda reg: safe(reg, config={...}))     # callable: fully custom assembly
 
 # 2. safe() direct form
 from norpagent import safe
@@ -2026,7 +2028,7 @@ match norpagent.security / plugin-loader config):
 - `plugin_config()` converts this context into plugin-loader config (the fallback
   when config is omitted); `to_dict()` outputs the full posture (consistent with
   `kit.describe()`);
-- a `SecurityContext` instance can be used directly as the `np(security=ctx)` slot value;
+- a `SecurityContext` instance can be used directly as the `npa(security=ctx)` slot value;
 - config keys favor the plugin-loader style (plugin_security_audit /
   plugin_network_policy / plugin_trusted_keys etc.), plus plain keys
   guard_enabled / harden_enabled / hook_intervention / approval /
@@ -2055,7 +2057,7 @@ Mount / unmount semantics:
 - `kit.hooks_installed(reg)` queries the current state;
 - `kit.uninstall(reg)` unsubscribes hook subscriptions and clears
   `registry.security`. Hot-mounting the security slot at runtime
-  (`np.remount(security=...)`) uninstalls the old kit before installing the new one,
+  (`npa.remount(security=...)`) uninstalls the old kit before installing the new one,
   preventing protection hooks from stacking on the same bus;
 - after a hot mount, runtime decisions take effect immediately; hook intervention
   applies to subsequent tasks' before_input / before_build_messages.
@@ -2143,7 +2145,7 @@ system stripped out, plugin loading inherits the global security posture by defa
 
 ```python
 # production default: standard + explicit hook intervention
-np(security={"level": "standard", "hooks": True})
+npa(security={"level": "standard", "hooks": True})
 
 # strict: high + whitelist network + trusted keys
 kit = safe(level="high", config={
@@ -2151,10 +2153,10 @@ kit = safe(level="high", config={
     "plugin_network_domain_allowlist": ["api.example.com"],
     "plugin_trusted_keys": ["<public key hex>"],
 })
-np(security=kit.context)                     # install the SecurityContext directly
+npa(security=kit.context)                     # install the SecurityContext directly
 
 # decisions only, zero intervention: use only approval and network policy; wire the guard logic yourself
-np(security={"level": "standard",
+npa(security={"level": "standard",
              "config": {"guard_enabled": False, "harden_enabled": False}})
 ```
 
@@ -2170,7 +2172,7 @@ np(security={"level": "standard",
 > Companion documents: `docs/plugins.md` (host side), `norpagent插件开发指南.md`
 > (plugin-author side).
 
-### 11.1 Two APIs and the np() Slot
+### 11.1 Two APIs and the npa() Slot
 
 ```python
 # convenient entry: load a directory in one call
@@ -2185,16 +2187,16 @@ ps.status()              # plugin list + isolation-host status
 ps.reload("my_tool")     # hot-reload a single plugin during development
 ps.shutdown()            # release process-isolated host subprocesses
 
-# np() slot (literal semantics, directory list)
-np(plugins=["./my_plugins"])
+# npa() slot (literal semantics, directory list)
+npa(plugins=["./my_plugins"])
 # runtime hot replacement: old subscriptions auto-unsubscribed, never stack (3.7)
-np.remount(plugins=["./my_plugins_v2"])
+npa.remount(plugins=["./my_plugins_v2"])
 ```
 
-The `np(plugins=[...])` slot assembles with fixed config (audit=warn, verification
+The `npa(plugins=[...])` slot assembles with fixed config (audit=warn, verification
 on, **does not read** registry.security's overrides); for fine-grained config use
 PluginSystem / install_plugin_dirs directly on a Registry (or a callable slot value
-like `np(plugins=lambda reg: ps.load())`).
+like `npa(plugins=lambda reg: ps.load())`).
 
 ### 11.2 Plugin Format (compatible with the existing application)
 
@@ -2344,7 +2346,7 @@ Isolation semantics:
 - `install_plugin_dirs(reg, dirs)` **without config** automatically adopts
   `registry.security.plugin_config()` — call `safe(reg, ...)` first, then install
   plugins, and plugin loading inherits the global security posture (note: the
-  `np(plugins=...)` slot path passes fixed config and does not read
+  `npa(plugins=...)` slot path passes fixed config and does not read
   registry.security);
 - `safe(level="high")`'s effect on plugins: audit block, permission declarations
   enforced, trusted signatures enforced (unsigned / untrusted rejected);
@@ -2384,11 +2386,11 @@ Lifecycle notes:
   instance's tools / hook subscriptions stay in the Registry (the tool table has
   name-override semantics; hooks cannot be bulk-unsubscribed by name) —
   **in production, prefer rebuilding the Registry and reloading**;
-- for a full runtime replacement use `np.remount(plugins=[...])`: the framework
+- for a full runtime replacement use `npa.remount(plugins=[...])`: the framework
   unsubscribes the old architecture-level plugin subscriptions first, then
   reinstalls (no stacking, 3.7);
 - `ps.shutdown()` / `loader.shutdown()` release the process-isolation host
-  subprocesses; hot-mounting the plugins slot (`np.remount(plugins=...)`) makes the
+  subprocesses; hot-mounting the plugins slot (`npa.remount(plugins=...)`) makes the
   framework uninstall the old loader first (unsubscribe hooks + clear sys.modules +
   release the isolation host).
 
@@ -2406,10 +2408,10 @@ Lifecycle notes:
 | `embedded` | embedded / edge / low-resource (0.9) | pure in-memory components + minimal tool set, **headless frontend by default**, no disk / no network dependencies; the model falls back to mock without credentials. See 14.2 |
 
 ```python
-np(preset="standard")
-np(preset="ptc")
-np(preset="embedded")                     # headless by default, pure-API mode
-np(preset=Preset(name="mine", model="mock", tools=["echo"], ...))
+npa(preset="standard")
+npa(preset="ptc")
+npa(preset="embedded")                     # headless by default, pure-API mode
+npa(preset=Preset(name="mine", model="mock", tools=["echo"], ...))
 ```
 
 ### 12.2 Custom Presets
@@ -2430,7 +2432,7 @@ my = Preset(
     params={"max_steps": 16},
     components={},
 )
-np(preset=my)
+npa(preset=my)
 ```
 
 ---
@@ -2450,7 +2452,7 @@ norpagent --mode standard --safe high --safe-hooks  # hook intervention on as we
 norpagent plugin-sign --gen                       # plugin signature keys
 ```
 
-The CLI is equivalent to `np()`: the CLI's internal flow is
+The CLI is equivalent to `npa()`: the CLI's internal flow is
 "install default components → register presets → apply security → load plugins →
 build the runtime".
 
@@ -2509,13 +2511,13 @@ components — presets declaring them (standard / longrun / creative etc.) are
 explicitly refused when assembled on this registry (the error lists the missing
 component names).
 
-**Way two: `np(preset="embedded")` (out of the box):**
+**Way two: `npa(preset="embedded")` (out of the box):**
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(preset="embedded")                   # headless by default: no HTTP service
-eng = np.current()
+npa(preset="embedded")                   # headless by default: no HTTP service
+eng = npa.current()
 result = eng.submit("hello")            # pure-API submission
 eng.request_stop()
 ```
@@ -2524,7 +2526,7 @@ Behavioral conventions of the embedded preset:
 
 - **the default frontend automatically falls back to headless** (the assembler's
   default factory judges the preset name); for a Web UI specify explicitly
-  `np(preset="embedded", frontend="norpagent.frontends.web:WebFrontend")`;
+  `npa(preset="embedded", frontend="norpagent.frontends.web:WebFrontend")`;
 - the model declares `openai_compat`: with any credential (parameter / environment
   variable) the real model is used, otherwise it falls back to mock (offline
   devices work out of the box);
@@ -2538,7 +2540,7 @@ Behavioral conventions of the embedded preset:
 os.environ["NORPAGENT_MAX_WORKERS"] = "1"
 os.environ["NORPAGENT_SUBMIT_POLL"] = "0.5"
 # or equivalent:
-np(config={"loop": {"max_workers": 1, "poll_interval": 0.5}})
+npa(config={"loop": {"max_workers": 1, "poll_interval": 0.5}})
 ```
 
 ### 14.3 Ultra-High-Concurrency Deployment
@@ -2546,17 +2548,17 @@ np(config={"loop": {"max_workers": 1, "poll_interval": 0.5}})
 **SSE backpressure config (startup params → env vars → runtime hot change):**
 
 ```python
-import norpagent as np
+import norpagent as npa
 
 # pass at startup
-np(config={"web": {"sse_queue_size": 2048, "sse_queue_policy": "drop_oldest"}})
+npa(config={"web": {"sse_queue_size": 2048, "sse_queue_policy": "drop_oldest"}})
 # or runtime params / environment variables
-np(sse_queue_size=2048, sse_queue_policy="drop_oldest")
+npa(sse_queue_size=2048, sse_queue_policy="drop_oldest")
 # NORPAGENT_SSE_QUEUE_SIZE=2048 NORPAGENT_SSE_QUEUE_POLICY=drop_oldest
 
 # hot change while running (no restart; takes effect on existing connections immediately)
 from norpagent.builtin.ui.web import WebUI
-ui = np.current().frontend._ui      # or hold the WebUI instance directly
+ui = npa.current().frontend._ui      # or hold the WebUI instance directly
 ui.set_sse_queue(sse_queue_size=4096, sse_queue_policy="drop_newest")
 print(ui.streams_info())
 ```
@@ -2635,10 +2637,10 @@ reclamation.
 
 | Layer | Capability | Entry |
 |---|---|---|
-| Undo / Redo | undo / restore the most recent operation, in-process immediate | Web UI buttons / Ctrl+Z / Ctrl+Shift+Z / `np.undo()` / `np.redo()` |
-| Rollback | browse all historical snapshots, roll back to any version | Web UI "rollback" panel / `np.rollback(id)` |
+| Undo / Redo | undo / restore the most recent operation, in-process immediate | Web UI buttons / Ctrl+Z / Ctrl+Shift+Z / `npa.undo()` / `npa.redo()` |
+| Rollback | browse all historical snapshots, roll back to any version | Web UI "rollback" panel / `npa.rollback(id)` |
 | Crash Rescue | roll back snapshots when the main program cannot start; suggest the last known-good snapshot | `norpagent-rescue` (standalone CLI, pure standard library) |
-| Safe Mode | load only the minimal kernel (skip all plugins), keep the core rollback capabilities | `np(safemode="on")` / CLI `--safe-mode` |
+| Safe Mode | load only the minimal kernel (skip all plugins), keep the core rollback capabilities | `npa(safemode="on")` / CLI `--safe-mode` |
 
 Snapshot content (mode A, default): all architecture-layer slot configurations
 (mode / model / tools / session / sandbox / frontend / plugin dirs / security
@@ -2648,37 +2650,37 @@ provider data. Sensitive keys (api_key / token etc.) are written only after
 type marker; on replay they are skipped with a hint (honest degradation, never
 fabricates state).
 
-Snapshot mode B: `np(snapshot_sessions="on")` additionally copies session-store
+Snapshot mode B: `npa(snapshot_sessions="on")` additionally copies session-store
 files into the snapshot attachments; rollback restores the whole files (this may
 overwrite conversations recorded after the rollback point).
 
 Storage: default `~/.norpagent/snapshots/` (manifest.json timeline + snap/ one
 JSON per snapshot + attachments/ session attachments + rollback_target.json the
 rescue rollback target). Overridable with the environment variable
-`NORPAGENT_SNAPSHOT_DIR` or `np(snapshot_dir=...)`; while running,
-`np.set_snapshot_dir()` hot-switches the storage directory (explicit programmatic
+`NORPAGENT_SNAPSHOT_DIR` or `npa(snapshot_dir=...)`; while running,
+`npa.set_snapshot_dir()` hot-switches the storage directory (explicit programmatic
 calls have the highest priority). Auto snapshots are on by default
-(`np(snapshots="off")` disables); auto-prune keeps the most recent 200.
+(`npa(snapshots="off")` disables); auto-prune keeps the most recent 200.
 
 ### 15.2 Snapshots and Undo / Redo
 
 Auto-snapshot timing: the startup baseline and after every system-state change
-(`np.remount` / WebUI settings saved / plugin installed / mode switched). Manual
+(`npa.remount` / WebUI settings saved / plugin installed / mode switched). Manual
 snapshots: the "manual snapshot" button in the Web UI rollback panel or
-`np.snapshot_system("description")`.
+`npa.snapshot_system("description")`.
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np()                                          # start (baseline snapshot taken automatically)
-np.snapshot_system("before installing plugins")   # manual snapshot
+npa()                                          # start (baseline snapshot taken automatically)
+npa.snapshot_system("before installing plugins")   # manual snapshot
 # ...make a few changes (remount / settings saved / install plugins)...
-np.undo()                                     # undo the most recent operation (in-process immediate)
-np.redo()                                     # restore the undo
-np.rollback("20260818T230101_ab12cd")         # roll back to any snapshot
-np.rollback()                                 # roll back to the last known-good snapshot
-np.list_snapshots()                           # timeline (is_current / is_last_good)
-np.mark_good_snapshot("<id>")                 # manually mark "known good"
+npa.undo()                                     # undo the most recent operation (in-process immediate)
+npa.redo()                                     # restore the undo
+npa.rollback("20260818T230101_ab12cd")         # roll back to any snapshot
+npa.rollback()                                 # roll back to the last known-good snapshot
+npa.list_snapshots()                           # timeline (is_current / is_last_good)
+npa.mark_good_snapshot("<id>")                 # manually mark "known good"
 ```
 
 Semantic points:
@@ -2730,17 +2732,17 @@ norpagent-rescue mark-good <id>              # manually mark "known good"
 norpagent-rescue prune --keep 50             # keep only the most recent N
 ```
 
-After a rollback, the next `norpagent` / `np()` startup **automatically consumes**
+After a rollback, the next `norpagent` / `npa()` startup **automatically consumes**
 the rollback target (rollback_target.json, deleted after consumption): file-level
 restore (WebUI settings / session files) executes immediately, and the snapshot's
 slot config merges into this startup — **parameters explicitly given this time
 take priority** (rescue is a fallback; it never overrides the user's conscious
-choices). On startup failure both the CLI and np() print self-rescue guidance
+choices). On startup failure both the CLI and npa() print self-rescue guidance
 (safe mode + rescue command).
 
 ### 15.5 Safe Mode
 
-Entry: `np(safemode="on")`, CLI `norpagent --safe-mode`. Safe mode is not entered
+Entry: `npa(safemode="on")`, CLI `norpagent --safe-mode`. Safe mode is not entered
 by default (any value other than on does not trigger it).
 
 Behavior (loads only the minimal kernel):
@@ -2755,8 +2757,8 @@ Behavior (loads only the minimal kernel):
    roll back to any known-good snapshot, then restart normally after repair.
 
 ```python
-import norpagent as np
-np(safemode="on")          # minimal kernel + Web rollback panel
+import norpagent as npa
+npa(safemode="on")          # minimal kernel + Web rollback panel
 ```
 
 ```bash
@@ -2911,7 +2913,7 @@ process) so on-call operators can take over.
 | Layer | Goal | Entry |
 |---|---|---|
 | snapshot rollback | config / plugins broken — roll back to a good state | `norpagent-rescue rollback --last-good` |
-| safe mode | keep rollback ability even when nothing starts | `np(safemode="on")` / `--safe-mode` |
+| safe mode | keep rollback ability even when nothing starts | `npa(safemode="on")` / `--safe-mode` |
 | **human rescue** | **model dead — a human does the model's work** | `norpagent-rescue tools / tool-call / manual / serve` |
 
 The three complement each other: first roll back (or enter safe mode) to rescue
@@ -2926,15 +2928,15 @@ task queue).
 ### 16.1 FastAPI Integration
 
 ```python
-import norpagent as np
+import norpagent as npa
 from fastapi import FastAPI
 
-np(preset="standard", frontend="norpagent.frontends.headless:HeadlessFrontend")
+npa(preset="standard", frontend="norpagent.frontends.headless:HeadlessFrontend")
 app = FastAPI()
 
 @app.post("/chat")
 def chat(text: str, session_id: str | None = None):
-    result = np.current().submit(text, session_id=session_id)
+    result = npa.current().submit(text, session_id=session_id)
     return {"content": result.final_content, "session_id": result.session_id,
             "status": result.status}
 ```
@@ -2942,10 +2944,10 @@ def chat(text: str, session_id: str | None = None):
 ### 16.2 Desktop-App Integration (pywebview style)
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(frontend="myapp.tray_frontend:TrayFrontend")
-fe = np.current().frontend
+npa(frontend="myapp.tray_frontend:TrayFrontend")
+fe = npa.current().frontend
 
 # the JS bridge forwards user input to fe.send();
 # subscribe to on_content on the event bus to push streaming output back to the frontend.
@@ -2953,11 +2955,11 @@ fe = np.current().frontend
 
 ### 16.3 Integration Points
 
-1. **singleton engine**: the running engine is a singleton; `np()` idempotently
+1. **singleton engine**: the running engine is a singleton; `npa()` idempotently
    returns the current engine;
-2. **lifecycle**: the main loop polls `np.stop()`; process exit has an atexit
+2. **lifecycle**: the main loop polls `npa.stop()`; process exit has an atexit
    fallback cleanup;
-3. **assembly observation**: `np.current().layer.describe()` prints the assembly
+3. **assembly observation**: `npa.current().layer.describe()` prints the assembly
    manifest.
 
 ---
@@ -2969,13 +2971,13 @@ python tests/test_p1_smoke.py    # kernel/protocol smoke
 python tests/test_p2_smoke.py    # adapters/tools/sessions
 python tests/test_p3_smoke.py    # context/scheduler/sandbox/security/plugins/Web
 python tests/test_p4_smoke.py    # hooks/security/PTC/isolation
-python tests/test_p5_arch.py     # architecture layer/address functions/np()/nasyncio
+python tests/test_p5_arch.py     # architecture layer/address functions/npa()/nasyncio
 ```
 
 Debugging aids:
 
 ```python
-eng = np.current()
+eng = npa.current()
 print(eng.state)              # engine state
 print(eng.layer.describe())   # assembly manifest
 print(eng.last_result)        # most recent task result
@@ -2993,18 +2995,18 @@ reg = Registry(); install_defaults(reg); register_all_presets(reg)
 agent = AgentRuntime(reg, preset="minimal")
 result = agent.run("hello")
 
-# new style: np() assembly (the manual assembly API stays usable)
-import norpagent as np
-np(preset="minimal", prompt="hello",
+# new style: npa() assembly (the manual assembly API stays usable)
+import norpagent as npa
+npa(preset="minimal", prompt="hello",
    frontend="norpagent.frontends.headless:HeadlessFrontend")
 while True:
-    if np.stop():
+    if npa.stop():
         break
-result = np.current().last_result
+result = npa.current().last_result
 ```
 
 The manual assembly API (Registry / AgentRuntime / Preset) **remains usable**;
-`np()` is its declarative wrapper.
+`npa()` is its declarative wrapper.
 
 ### 18.2 Migrating from the Old Desktop Application
 
@@ -3031,7 +3033,7 @@ Modules in the old application mount into slots per the mapping below:
 - 0.7 added the Web frontend `html` slot mounting parameter (four ways to replace
   the `/` route page: `;key=value` address clause / constructor / config dict /
   runtime params), fixed the `;key=value` address-clause resolution chain, and
-  added **runtime hot mount** (`np.remount()` replacing any slot while running, see 3.7);
+  added **runtime hot mount** (`npa.remount()` replacing any slot while running, see 3.7);
 - 0.8 migrated the default event loop to the **self-developed nasyncio core**
   (originally nasync_io, packaged into the library as `norpagent.nasyncio`): the
   library has **zero `import asyncio`** and no longer depends on the standard
@@ -3053,8 +3055,8 @@ Modules in the old application mount into slots per the mapping below:
   register / unregister **custom slots** at runtime (`SlotSpec.applier` declares
   assembly logic, `remount_rebuild_agent` declares whether to hot-rebuild the
   AgentRuntime after a hot replacement); registration plugs into the full
-  pipeline — `np()` parameter validation, ArchLayer assembly (connect
-  idempotently fills in late-registered slots), `np.remount()` hot replacement,
+  pipeline — `npa()` parameter validation, ArchLayer assembly (connect
+  idempotently fills in late-registered slots), `npa.remount()` hot replacement,
   `layer.describe()` listing; `replace=True` spec hot-replacement is supported;
   the 18 built-in slots are protected (their values can still be hot-replaced at
   any time); slot-table operations are thread-safe. Behavior compatibility: the
@@ -3065,7 +3067,7 @@ Modules in the old application mount into slots per the mapping below:
 (in-process immediate, reusing the remount hot-mount pipeline) + the standalone
 crash-rescue CLI `norpagent-rescue` (pure standard library; suggests the last
 known-good snapshot for one-step restore; the rollback target is consumed
-automatically at the next startup) + safe mode (`np(safemode="on")` / CLI
+automatically at the next startup) + safe mode (`npa(safemode="on")` / CLI
 `--safe-mode`, loads only the minimal kernel); auto snapshots are on by default
 (after remount / settings saved / plugins installed), sensitive keys are redacted
 before persisting, custom snapshot providers and snapshot mode B (including session
@@ -3076,23 +3078,23 @@ data files) are supported;
 
 ## Chapter 19 FAQ
 
-**Q1: does `np()` block?**
+**Q1: does `npa()` block?**
 No. The engine runs on background threads and the main thread keeps executing —
-this is exactly why the `while running: if np.stop()` pattern exists.
+this is exactly why the `while running: if npa.stop()` pattern exists.
 
-**Q2: when does `np.stop()` become True?**
+**Q2: when does `npa.stop()` become True?**
 When the engine is STOPPED: the single task finished, the frontend `/exit`, an
 explicit `shutdown()`, or any `request_stop()`. Always True with no engine.
 
 **Q3: how do I pass the model API key?**
 ```python
-np(model="openai_compat", model_name="deepseek-v4-flash",
+npa(model="openai_compat", model_name="deepseek-v4-flash",
    base_url="https://api.deepseek.com/v1", api_key="sk-...")
 ```
 `model_name / base_url / api_key` are model shortcut parameters: when the model is
 a built-in adapter name the provider is reconstructed automatically (same as the
 CLI); or set the environment variable `OPENAI_API_KEY` directly; or pass a
-constructed provider instance `np(model=MyProvider())`.
+constructed provider instance `npa(model=MyProvider())`.
 
 **Q4: can address strings cause arbitrary code execution?**
 Yes. An address string names the module to load; address values are passed by the
@@ -3108,7 +3110,7 @@ API directly: `Registry() + AgentRuntime(...)`, not bound by the singleton
 Yes. Hooks hang on the event bus (the bottom minimal kernel), independent of the
 loop system.
 
-**Q7: what is the difference between `np(async_loop=...)` and `np.nasyncio(...)`?**
+**Q7: what is the difference between `npa(async_loop=...)` and `npa.nasyncio(...)`?**
 None — the same path; the former is the slot form, the latter the architecture
 function form.
 
@@ -3147,14 +3149,14 @@ run(), no restart. See 5.7 "agent-tool mounting" and `docs/flow.md` section 9.
 
 **Q11: can I swap the model / frontend / modules after startup? (runtime hot
 mount)**
-Yes. `np.remount(slot=value)` replaces any slot while the engine runs: component
+Yes. `npa.remount(slot=value)` replaces any slot while the engine runs: component
 slots (model / tools / hooks / security / plugins) take effect on the next run();
 assembly slots (session / sandbox / scheduler / ui / agent_runtime / preset /
 context_store / project_manager) trigger an AgentRuntime hot rebuild;
 frontend / async_loop stop the old and start the new; logger / storage /
 error_handler update immediately. String addresses invalidate the module cache
 and .pyc before remounting, so "edit the module file →
-np.remount(model="myapp.model:create")" is hot reload. Repeatedly mounted
+npa.remount(model="myapp.model:create")" is hot reload. Repeatedly mounted
 architecture-level subscriptions are unsubscribed first then remounted, never
 stacking. See 3.7.
 
@@ -3183,12 +3185,12 @@ threading / selectors / socket. Declaration, reasons and verification in 4.7.
 (0.9)**
 - **embedded**: `install_core()` with a self-built registry (no sqlite3 /
   http.server imports) + `build_embedded_preset()`, or directly
-  `np(preset="embedded")` (headless frontend by default, mock fallback); tighten
+  `npa(preset="embedded")` (headless frontend by default, mock fallback); tighten
   worker threads with `NORPAGENT_MAX_WORKERS=1` (or `config={"loop":
   {"max_workers": 1}}`), relax polling with `NORPAGENT_SUBMIT_POLL`.
 - **ultra-high-concurrency**: SSE per-connection bounded buffer default 1024,
   slow clients drop the oldest (`drop_oldest`); configure at startup with
-  `np(config={"web": {"sse_queue_size": 2048}})`, hot-change while running with
+  `npa(config={"web": {"sse_queue_size": 2048}})`, hot-change while running with
   `WebUI.set_sse_queue(...)` / `POST /api/streams`; batched frame writes (default
   32 frames / 50ms) reduce system calls; EventBus copy-on-write eliminates
   per-event list copies. Full details in Chapter 14.
@@ -3196,28 +3198,28 @@ threading / selectors / socket. Declaration, reasons and verification in 4.7.
 **Q15: what if the framework lacks the slot I need? (hot-pluggable slot table,
 0.9)**
 Register your own: `register_slot(SlotSpec(name=..., string_semantics=...,
-applier=...))`. Registration plugs into the full pipeline — `np()` parameter
-validation, assembly, `np.remount()` hot replacement, `layer.describe()`
+applier=...))`. Registration plugs into the full pipeline — `npa()` parameter
+validation, assembly, `npa.remount()` hot replacement, `layer.describe()`
 listing; the applier receives the resolved slot value and four mutable containers
 (components / extras / overrides / meta) and can register generic components
 (`remount_rebuild_agent=True` hot-rebuilds the AgentRuntime after a hot
 replacement), mount event subscriptions (recorded in meta for unsubscribe, so
 reentrancy is safe), or provide extra objects to the engine. The 18 built-in
 slots are protected (cannot be overridden / unregistered); their values can be
-hot-replaced with `np.remount` at any time. Full contract in 3.8.
+hot-replaced with `npa.remount` at any time. Full contract in 3.8.
 
 **Q16: how do I undo a config change / roll back to a previous state? (work
 rollback, 0.9)**
-Three steps: in-process `np.undo()` / `np.redo()` (Web UI Ctrl+Z / Ctrl+Shift+Z
+Three steps: in-process `npa.undo()` / `npa.redo()` (Web UI Ctrl+Z / Ctrl+Shift+Z
 or the "rollback" panel buttons, immediate); roll back to any version with
-`np.rollback("<snapshot id>")` (`np.list_snapshots()` browses the timeline;
-`np.rollback()` with no args = the last known-good snapshot); when the main
+`npa.rollback("<snapshot id>")` (`npa.list_snapshots()` browses the timeline;
+`npa.rollback()` with no args = the last known-good snapshot); when the main
 program cannot start use `norpagent-rescue rollback --last-good` (pure
 standard-library CLI; applied automatically at the next startup), or
-`norpagent --safe-mode` / `np(safemode="on")` to load only the minimal kernel and
+`norpagent --safe-mode` / `npa(safemode="on")` to load only the minimal kernel and
 fix the config. Snapshots default to `~/.norpagent/snapshots/`; sensitive keys
 are redacted; auto snapshots are on by default (disable with
-`np(snapshots="off")`). Full semantics in Chapter 15.
+`npa(snapshots="off")`). Full semantics in Chapter 15.
 
 ---
 
@@ -3244,7 +3246,7 @@ are redacted; auto snapshots are on by default (disable with
 | storage | literal | ~/.norpagent | - |
 | error_handler | literal | records to the log | - |
 
-> Runtime hot mount (3.7): every slot can be replaced with `np.remount(slot=value)`.
+> Runtime hot mount (3.7): every slot can be replaced with `npa.remount(slot=value)`.
 > `agent_runtime` is a `defer_factory` slot (the factory call is deferred to the
 > engine assembly phase). Hot-pluggable slot table (3.8): `register_slot()` can
 > register custom slots into this table.
@@ -3271,23 +3273,23 @@ are redacted; auto snapshots are on by default (disable with
 
 ```python
 # module entry
-np()                      # launch()
-np.stop()                 # lifecycle polling
-np.nasyncio(address=...)  # event-loop architecture function (np.nasyncio binds the self-developed core module, callable)
-np.current() / np.submit() / np.shutdown()
-np.remount(model=..., ...)   # runtime hot mount: any slot replaceable
+npa()                      # launch()
+npa.stop()                 # lifecycle polling
+npa.nasyncio(address=...)  # event-loop architecture function (npa.nasyncio binds the self-developed core module, callable)
+npa.current() / npa.submit() / npa.shutdown()
+npa.remount(model=..., ...)   # runtime hot mount: any slot replaceable
 
 # work rollback (Chapter 15)
 from norpagent.recovery import (snapshot_system, undo, redo, rollback,
                                 list_snapshots, mark_good, last_good_id,
                                 register_snapshot_provider, set_snapshot_dir,
                                 prune, RecoveryError)
-np.snapshot_system("description")  # manual snapshot (top-level convenience entry)
-np.undo() / np.redo()             # undo / restore (in-process immediate)
-np.rollback("<id>")               # roll back to any snapshot (default = last known good)
-np.mark_good_snapshot("<id>")     # mark "known good"
-np(safemode="on")                 # safe mode: loads only the minimal kernel
-np(snapshot_dir=..., snapshots="off", snapshot_sessions="on")  # snapshot config
+npa.snapshot_system("description")  # manual snapshot (top-level convenience entry)
+npa.undo() / npa.redo()             # undo / restore (in-process immediate)
+npa.rollback("<id>")               # roll back to any snapshot (default = last known good)
+npa.mark_good_snapshot("<id>")     # mark "known good"
+npa(safemode="on")                 # safe mode: loads only the minimal kernel
+npa(snapshot_dir=..., snapshots="off", snapshot_sessions="on")  # snapshot config
 # crash rescue: norpagent-rescue list|show|rollback|mark-good|prune
 # human rescue (15.6): norpagent-rescue tools|tool-call|manual|serve
 from norpagent.rescue_api import (RescueToolEnvironment, RescueToolAPI)
@@ -3332,7 +3334,7 @@ from norpagent.runtime import (launch, current, stop, submit,
                                shutdown, NorpEngine, EngineState, EngineError)
 # task-level slot injection (3.9): submit(text, slot_overrides={...})
 #   engine.submit("task", slot_overrides={"model": "anthropic", "tools": [...]})
-#   np.submit("task", slot_overrides={"session": {"name": "memory", "persist": True}})
+#   npa.submit("task", slot_overrides={"session": {"name": "memory", "persist": True}})
 
 # kernel (manual assembly, equivalently kept)
 from norpagent import (Registry, EventBus, Preset, AgentRuntime,
@@ -3369,11 +3371,11 @@ ui.set_sse_queue(4096, "drop_newest")   # hot change while running (equivalent t
 ui.streams_info()                        # subscriber count / dropped-event count / buffer depth
 # WebFrontend homogeneous entry: frontend.mount_page(page, html)
 # remount page hot-replace keys (v0.9):
-#   np.remount(flow_html="/path/to/new-flow.html")  # /flow page swapped immediately
-#   np.remount(html="/path/to/new-front.html")      # / main page swapped immediately
-#   np.remount(flow_html=None)                      # unmount, fall back to the library built-in
+#   npa.remount(flow_html="/path/to/new-flow.html")  # /flow page swapped immediately
+#   npa.remount(html="/path/to/new-front.html")      # / main page swapped immediately
+#   npa.remount(flow_html=None)                      # unmount, fall back to the library built-in
 # frontend slot HTML-path direct mount (v0.9):
-#   np(frontend="/path/to/my.html")  ==  np(frontend="...WebFrontend;html=/path/to/my.html")
+#   npa(frontend="/path/to/my.html")  ==  npa(frontend="...WebFrontend;html=/path/to/my.html")
 ```
 
 ---
@@ -3719,7 +3721,7 @@ shutdown).
 ### 22.5 Pages and Frontend Modules (FE)
 
 - pages: `/` (front.html) and `/flow` (norpflow.html), both hot-replaceable at
-  runtime (`mount_page` / `np.remount(html=...)` / `np.remount(flow_html=...)`),
+  runtime (`mount_page` / `npa.remount(html=...)` / `npa.remount(flow_html=...)`),
   HTTP not restarted, port unchanged;
 - FE frontend modules: `.html` / `.js` / `.ts` files (`fe_read_file` returns by
   mime); after startup `_scan_fe_modules` rescans the module directory to restore
@@ -3847,7 +3849,7 @@ Rescue mode picks its entry points by "which layer failed":
 | Failed layer | Symptom | Available entry | Dependency |
 |---|---|---|---|
 | Model down | loop / engine healthy, model calls fail | `norpagent-rescue tools / tool-call / manual / serve` | framework importable (`rescue_api` lazily loaded) |
-| Engine down | the loop may still be alive, AgentRuntime cannot start | `norpagent-rescue rollback` / `np(safemode="on")` | pure stdlib |
+| Engine down | the loop may still be alive, AgentRuntime cannot start | `norpagent-rescue rollback` / `npa(safemode="on")` | pure stdlib |
 | Loop down | scheduling / tasks fully paralyzed | `norpagent-rescue list / show / rollback / mark-good / prune` | pure stdlib |
 
 **Core principle (rescue.py's isolation boundary)**:
@@ -3936,9 +3938,9 @@ submit sync functions or coroutines through the loop held by the engine
 path:
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-engine = np.current()                      # running engine (loop thread + worker pool alive)
+engine = npa.current()                      # running engine (loop thread + worker pool alive)
 loop = engine.async_loop                   # LoopRuntime protocol instance
 
 # way 1: sync function (worker pool; blocks for the result)
@@ -4113,7 +4115,7 @@ Model calls failing?
 │         ├─ alive -> norpagent-rescue tools / tool-call / manual / serve
 │         │           (or programmatically: engine.async_loop.submit(lambda manual tool))
 │         └─ dead -> rollback --last-good (pure stdlib)
-│                   -> still won't start -> np(safemode="on") minimal kernel
+│                   -> still won't start -> npa(safemode="on") minimal kernel
 └─ no  -> but tasks stuck / unresponsive?
           ├─ rt.interrupt() / loop.abort_main() hard stop (24.2.5)
           ├─ loop thread also dead -> rebuild a bare EventLoop + RescueToolEnvironment (24.2.4)
@@ -4132,12 +4134,1769 @@ low-level control when the loop itself is in trouble.
 
 ---
 
+## Chapter 25 Developer Practice: Modules, Slots, Plugins and Tools
+
+> The first 24 chapters answer "what the framework can do"; this chapter answers
+> "how you develop for it": module-by-module development methods (protocol →
+> implementation → registration → integration → hot reload), the complete slot
+> development contract (including the hot-reload red line: **the values of dict
+> key-value pairs must be valid modules**), complete plugin and tool development
+> examples, and finally a section back to the architecture and the minimal main
+> async-loop core — understand it, and you understand why every extension point
+> exists and why hot reload is safe.
+
+### 25.1 Architecture Overview and the Minimal Main Async-Loop Core
+
+#### 25.1.1 The Architecture in One Picture (Quick Overview)
+
+NorpAgent's architecture in one sentence: **everything except the minimal kernel
+is a replaceable slot**.
+
+```
+Your app: npa() / npa.stop() / npa.nasyncio() / npa.current().submit()
+    │
+runtime layer runtime/    lifecycle state machine + thread orchestration (NorpEngine)
+    │
+arch layer arch/          slot table (SLOT_SPECS) + address resolution (address) + assembly (ArchLayer)
+    │
+loop system loops/        LoopRuntime protocol + default NasyncioLoopRuntime (self-developed nasyncio core)
+    │
+kernel kernel/            Registry (registry) + EventBus (event bus) + AgentRuntime (agent loop)
+    │
+protocol layer protocols/ all interface contracts: model / tool / session / sandbox / scheduler / UI / plugin
+    │
+implementation builtin/   built-in components (absolutely equal in status to third-party components; registered the same way)
+```
+
+- **The minimal kernel is only four things**: `ArchLayer` (slot connector),
+  `address` (address resolution), `Registry` (registry), `EventBus` (event bus)
+  — everything else is a slot (2.3);
+- **Dependencies point strictly downward**: upper layers import lower layers;
+  lower layers must never depend on upper layers (2.6.1);
+- **Four kinds of extension points**: event subscription (Chapter 9) /
+  component replacement (Chapter 3) / generic components (2.6.3) / brand-new
+  slots (3.8 and 25.10) / external plugins (Chapter 11 and 25.11);
+- **Zero-modification red line**: the framework core is never modified; all
+  extension goes through slots / hooks / the registry.
+
+#### 25.1.2 The Minimal Main Async-Loop Core: EventLoop Internals
+
+`norpagent.nasyncio.EventLoop` (self-developed, zero asyncio dependency) is the
+heart of all scheduling. After one `npa()` startup, the engine's
+submit → loop submit → worker pool → result path all revolves around the five
+structures below:
+
+| Structure | Role |
+|---|---|
+| `_ready` (deque) | callbacks waiting to run: `call_soon` / expired timers / Task advancement |
+| `_scheduled` (timer heap) | timers: `(when, seq, TimerHandle)`, used by `call_later` / `sleep` |
+| `_ts_queue` (thread-safe queue) | cross-thread submissions: `call_soon_threadsafe` |
+| self-pipe (socketpair) | wakes the loop thread blocked in `selector.select` from other threads |
+| `_selector` | listens only for self-pipe readability |
+
+The flow of each `_run_once()` round (this is also the canonical pattern of a
+"minimal main async loop"):
+
+```
+1. pop expired timers from the heap -> move them to _ready
+2. compute the select wait time (ready non-empty: 0; timers pending: wait until
+   the earliest expiry; otherwise: wait forever)
+3. drain the thread-safe queue once first (fewer spurious wakeups)
+4. selector.select(wait) — wake on self-pipe readability or timer expiry
+5. drain the self-pipe + thread-safe queue -> merge everything into _ready
+6. run _ready by snapshot length (anti-starvation); a callback exception is
+   printed and the loop continues — it never breaks the loop
+```
+
+**Future / Task trampoline advancement**: `Task._step()` calls `coro.send(None)`;
+when the coroutine `yield`s a Future it suspends and registers
+`_on_waiter_done`; when the Future completes, the callback re-queues `_step`
+into the ready queue to keep advancing — the loop thread never waits on any
+coroutine; it only "runs the queued callbacks one by one".
+
+**Cancel propagation**: `Task.cancel()` automatically detects the calling
+thread — from the loop thread it goes through `call_soon`, from any other thread
+through `call_soon_threadsafe` (writes the self-pipe to wake up immediately),
+so **external threads can cancel any task directly** (standard asyncio's
+`Task.cancel()` is not thread-safe; this is a key fix of the self-developed
+core, see 4.7); cancellation is injected with `coro.throw(CancelledError)` and
+the coroutine decides whether to respond or swallow it.
+
+**Three classic pitfalls that were fixed** (detailed in 4.5):
+
+1. cross-thread `Future.add_done_callback` on an already-completed future must
+   go through `call_soon_threadsafe` (write the self-pipe), otherwise the loop
+   blocks in the selector without a wakeup and the waiter hangs forever;
+2. `Future.result()` is thread-safe (no bare waiting without a wakeup);
+3. `EventLoop.abort_main()` provides a thread-safe "immediate stop" — it
+   injects `CancelledError` into the main task without waiting for the current
+   await to finish naturally (detailed in 24.2).
+
+#### 25.1.3 A Teaching-Grade Minimal Event Loop (~40 Lines)
+
+The best way to understand the core is to write a minimal version yourself.
+Below is a runnable "minimal main async loop" (isomorphic to the self-developed
+core, for illustration only):
+
+```python
+# myapp/mini_loop.py -- teaching-purpose minimal event loop (for illustration;
+#                       use the library built-in core in production)
+import heapq, socket, selectors, time, threading
+from collections import deque
+
+
+class MiniLoop:
+    def __init__(self):
+        self._ready = deque()          # callbacks ready to run
+        self._timers = []              # timer heap [(when, seq, cb)]
+        self._seq = 0
+        self._sel = selectors.DefaultSelector()
+        self._ssock, self._csock = socket.socketpair()
+        self._ssock.setblocking(False)
+        self._sel.register(self._ssock, selectors.EVENT_READ)
+
+    def call_soon(self, cb, *args):    # from the loop thread
+        self._ready.append((cb, args))
+        self._wake()
+
+    def call_later(self, delay, cb, *args):   # timer
+        self._seq += 1
+        heapq.heappush(self._timers, (time.monotonic() + delay,
+                                      self._seq, cb, args))
+
+    def call_soon_threadsafe(self, cb, *args):  # cross-thread: write the self-pipe to wake up
+        self._ready.append((cb, args))
+        self._wake()
+
+    def _wake(self):                   # wake the loop thread blocked in select
+        try:
+            self._csock.send(b"\0")
+        except OSError:
+            pass
+
+    def run_forever(self):
+        while True:
+            # 1. expired timers -> ready
+            now = time.monotonic()
+            while self._timers and self._timers[0][0] <= now:
+                _, _, cb, args = heapq.heappop(self._timers)
+                self._ready.append((cb, args))
+                now = time.monotonic()
+            # 2. select wait duration
+            wait = 0.0 if self._ready else (
+                max(0.0, self._timers[0][0] - now) if self._timers else None)
+            # 3. block until readable (self-pipe or timer expiry)
+            try:
+                events = self._sel.select(wait)
+            except (InterruptedError, OSError):
+                events = []
+            for _key, _mask in events:
+                self._ssock.recv(4096)          # drain the wake-up bytes
+            # 4. run ready callbacks by snapshot (anti-starvation)
+            n = len(self._ready)
+            for _ in range(n):
+                cb, args = self._ready.popleft()
+                try:
+                    cb(*args)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()       # a failing callback must not break the loop
+
+
+if __name__ == "__main__":
+    loop = MiniLoop()
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    loop.call_later(0.5, lambda: print("timer fired"))
+    loop.call_soon_threadsafe(lambda: print("hello from main thread"))
+    time.sleep(1)
+    loop.call_soon(loop._ssock.close)
+```
+
+The real core adds on top of this: Future / Task (trampoline), cancel
+injection, `run_until_complete` / `abort_main`, subprocess wrapping, and
+synchronization primitives (Event / Lock / Condition). Master the 40 lines
+above and you master the whole skeleton of the "minimal main async-loop core" —
+none of the module development in 25.2 ~ 25.11 will require touching it.
+
+#### 25.1.4 The Universal Five Steps of Module Development
+
+No matter which kind of module you develop (tool / model / session / sandbox /
+scheduler / frontend / loop / generic component), the flow is exactly the same
+(an expanded version of 2.6.4):
+
+1. **Read the protocol**: the interface contracts under `norpagent/protocols/`
+   (model / tool / session / sandbox / scheduler / UI / plugin), and confirm the
+   protocol and data classes to implement;
+2. **Write the implementation**: create a new module that depends only on
+   protocols and the standard library (follow the style under `builtin/`;
+   built-in components and third-party components are absolutely equal);
+3. **Register**: `reg.register_*(...)` (Registry API table in 25.2.5) or
+   `registry.register_component(kind, name, factory)`;
+4. **Declare it for use**: declare it in a preset (`session="my_impl"`), or at
+   startup `npa(session="my_impl")` / an address string
+   `npa(session="myapp.sessions:create")`;
+5. **Wire hooks** (optional): publish / subscribe events through the registry
+   inside the implementation (Chapter 9).
+
+Hot reload is the natural extension of step 4: `npa.remount(session=
+"myapp.sessions:create")` re-resolves the address at runtime and **first
+invalidates the module cache and .pyc files** (3.7), so "edit the implementation
+code → remount" hot-updates it without restarting the process.
+
+---
+
+### 25.2 Tool Development in Detail (Key Section)
+
+Tools are the Agent's "skills": the model decides **whether** to call them, you
+decide **how** they execute. Developing tools is the most frequent and most
+rewarding way to extend NorpAgent.
+
+#### 25.2.1 Protocol and Data Classes
+
+```python
+# norpagent/protocols/tool.py
+class Tool(Protocol):
+    name: str                                        # unique tool name (what the model calls)
+    def schema(self) -> dict: ...                    # OpenAI function schema
+    def run(self, args: dict, ctx: RunContext) -> ToolResult: ...
+
+@dataclass
+class ToolResult:
+    output: str = ""                                 # text fed back to the model
+    success: bool = True
+    error: str = ""
+```
+
+Key points:
+
+- `schema()` returns the OpenAI function format
+  (`type/function/name/description/parameters`) — this is the world the model
+  sees, so **how well you write the description directly determines whether the
+  model calls correctly**;
+- `args` of `run()` is the JSON argument generated by the model according to
+  the schema (already parsed into a dict);
+- return a `ToolResult`: on success fill `output`; on failure set
+  `success=False` and fill `error` (the model sees a `[tool execution failed]`
+  prefix);
+- you may raise an exception — the kernel catches it and converts it into a
+  unified failed ToolResult (`tool_error`) — but **explicitly returning a failed
+  result is more controllable**.
+
+#### 25.2.2 Complete Example: A "Weather Query" Tool from Scratch
+
+```python
+# myapp/weather_tool.py -- your own tool module
+from __future__ import annotations
+
+import json
+from typing import Any, Dict
+from urllib.request import urlopen
+
+from norpagent.protocols.tool import Tool, ToolResult
+
+
+class WeatherTool:
+    name = "weather"
+
+    def __init__(self, api_key: str = "", base_url: str = "https://wttr.in"):
+        self._api_key = api_key          # constructor param: injectable via the address clause ;api_key=...
+        self._base_url = base_url
+
+    def schema(self) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "Query the current weather of a city. The city may be given in Chinese or pinyin.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "city": {"type": "string", "description": "city name, e.g. Beijing / Shanghai"},
+                    },
+                    "required": ["city"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+    def run(self, args: Dict[str, Any], ctx: Any) -> ToolResult:
+        city = str(args.get("city", "")).strip()
+        if not city:
+            return ToolResult(output="missing city parameter", success=False, error="city is required")
+        try:
+            with urlopen(f"{self._base_url}/{city}?format=j1", timeout=10) as resp:
+                data = json.load(resp)
+            cur = data["current_condition"][0]
+            return ToolResult(output=(
+                f"{city} now {cur['temp_C']} C, "
+                f"feels like {cur['FeelsLikeC']} C, {cur['weatherDesc'][0]['value']}"
+            ))
+        except Exception as exc:
+            return ToolResult(output=f"query failed: {exc}", success=False, error=str(exc))
+
+
+def create(**kw):                        # module-level factory: address "myapp.weather_tool" auto-resolves to it
+    return WeatherTool(**kw)
+```
+
+#### 25.2.3 RunContext: What a Tool Can Access
+
+`ctx` of `run(args, ctx)` is a `RunContext` (`norpagent.kernel.context`) — the
+entire environment of one task execution:
+
+| Field | Description |
+|---|---|
+| `ctx.registry` | component registry (resolve other tools / models: `reg.resolve_tool(name)`) |
+| `ctx.session_manager` / `ctx.session_id` | session read/write (cross-turn memory) |
+| `ctx.sandbox` | the current task's sandbox (`run_shell` / `run_python`, isolated execution) |
+| `ctx.scheduler` | task scheduler (submit subtasks; the multi-agent collaboration entry) |
+| `ctx.ui` | UI adapter (`ctx.ask_user(...)` human interaction / approval) |
+| `ctx.params` | merged result of preset params and task-level params (`max_steps` / `task_timeout` / custom keys) |
+| `ctx.components` | generic component instances declared in the preset (`{kind: instance}`) |
+| `ctx.component("context_store")` | get a generic component by kind (context store / project manager, etc.) |
+| `ctx.task_id` / `ctx.preset_name` | task metadata |
+
+```python
+# idiomatic way to use a component inside a tool
+store = ctx.component("context_store")     # None if absent; fall back yourself
+if store is not None:
+    store.add(ctx.session_id, chunk, meta={"tool": self.name})
+```
+
+#### 25.2.4 Cancellation Cooperation (Mandatory for Long Tasks)
+
+A task may be cancelled by Ctrl+C / `engine.request_stop()` / timeout. The
+built-in cancellation signal is injected through contextvars and can be checked
+anywhere inside a tool (4.6.2):
+
+```python
+from norpagent.loops.cancel import cancel_requested
+
+def run(self, args, ctx):
+    for chunk in self._fetch_stream(args["url"]):
+        if cancel_requested():            # engine stopped / cancelled -> True
+            return ToolResult(output="task cancelled", success=False)
+        self._write(chunk)
+    return ToolResult(output="done")
+```
+
+A long tool that never checks cancellation will occupy the daemon worker pool
+(boundary in 4.6.4) — always check on **streaming / loop / chunked** paths.
+
+#### 25.2.5 The Four Ways to Register and Integrate
+
+| Way | Form | Scenario |
+|---|---|---|
+| Registry entry | `reg.register_tool("weather", WeatherTool())` | programmatic assembly; other components can reference it by name |
+| Instance list | `npa(tools=[WeatherTool(), MyTool()])` | ready at startup |
+| Name mapping | `npa(tools={"weather": WeatherTool(api_key="x")})` | ready at startup (key = tool name) |
+| Address mapping | `npa(tools={"weather": "myapp.weather_tool:create"})` | ready at startup + hot-reloadable |
+
+`npa(tools=["weather"])` references a **registered name**; the value of an
+address mapping `"myapp.weather_tool:create"` is a **module address**, resolved
+into a factory at assembly time and called per the factory convention (3.4: the
+`;api_key=xxx` clause injects the factory's `config`):
+
+```python
+npa(tools={"weather": "myapp.weather_tool:create;api_key=MY_KEY"})
+# equivalent to WeatherTool(api_key="MY_KEY")
+```
+
+The complete set of Registry registration APIs (`norpagent.kernel.registry`):
+
+| API | Description |
+|---|---|
+| `register_tool(name, tool)` / `resolve_tool(name)` / `list_tools()` | tools |
+| `register_model(name, provider)` / `resolve_model(name)` | models |
+| `register_session(name, factory)` / `build_session(name)` | sessions (factory) |
+| `register_sandbox(name, factory)` / `build_sandbox(name)` | sandboxes (factory) |
+| `register_scheduler(name, factory)` / `build_scheduler(name)` | schedulers (factory) |
+| `register_ui(name, adapter)` / `resolve_ui(name)` | UI renderers |
+| `register_component(kind, name, factory)` / `build_component(kind, name)` | generic components (any kind) |
+| `register_preset(preset)` / `resolve_preset(name)` | presets |
+
+#### 25.2.6 Hot-Reloading Tools: Dict Key-Value Values Must Be Valid Modules (Red Line)
+
+The tool set is a **component slot**; `npa.remount(tools=...)` takes effect at
+the next `run()` (the agent loop re-resolves tool schemas on every run). All
+three forms are hot-reloadable:
+
+```python
+npa.remount(tools=["echo", "weather"])                    # registered-name list
+npa.remount(tools={"weather": WeatherTool(api_key="new key")})  # instance mapping
+npa.remount(tools={"weather": "myapp.weather_tool:create"})   # address mapping (recommended)
+```
+
+**Red line: at hot reload the value of a dict key-value pair must be a valid
+module.** For dict-form values of the tools mapping, and of any slot (hooks
+mapping, custom-slot dict values, nested dicts recursively), if a string
+**looks like a pure address** (dotted identifier containing `.` or `:`,
+detected by `norpagent.arch.address.is_address_like`), the assembler resolves
+it as an address:
+
+- value = **registered name** (e.g. `"echo"`) → kept verbatim as a name
+  reference;
+- value = **valid module address** (e.g. `"myapp.weather_tool:create"`) → load
+  the module, take the attribute, call it per the factory convention;
+- value = **valid instance / factory object** → used as-is;
+- value = **address-like but unresolvable** (module missing / attribute missing
+  / syntax error) → raises `AddressError` (`AddressError(ImportError)`);
+  **the hot reload fails; no silent fallback, no partial effect**.
+
+```python
+# wrong: module name misspelled / attribute missing -> AddressError, remount raises
+npa.remount(tools={"weather": "myapp.weather_toll:create"})   # typo
+npa.remount(tools={"weather": "myapp.weather_tool:WeatherTool"})  # class not instantiated? -> callable is called as a factory (legal)
+npa.remount(tools={"weather": "myapp.not_exist:create"})      # module does not exist
+
+# correct: choose one of three
+npa.remount(tools={"weather": "myapp.weather_tool:create"})   # address (module importable)
+npa.remount(tools={"weather": "weather"})                     # registered name (registered via register_tool)
+npa.remount(tools={"weather": WeatherTool()})                 # instance
+```
+
+Why "if you wrote an address it should raise": hot reload is an ops action; a
+silently falling-back address would quietly leave the old / an empty
+implementation running online, which is much harder to debug than an explicit
+failure. Therefore the assembler strictly resolves every "address-like string"
+(item 3 of 3.3; the original comment in `layer.py` `_resolve_dict_values`:
+"if you wrote an address it must raise explicitly, never fall back
+silently"). **Strings that are not address-like (e.g. `"high"`, `"./dir"`)
+are unaffected and keep their literal semantics**.
+
+Another hot-reload detail: **address hot reload invalidates the module cache
+first**. `remount` runs `_invalidate_address_module` on string addresses —
+deletes the .pyc corresponding to `__cached__` and pops the `sys.modules`
+entry, so the next resolution re-imports from disk (3.7). Therefore "edit
+`myapp/weather_tool.py` → `npa.remount(tools={"weather":
+"myapp.weather_tool:create"})`" hot-updates the code. Note: **instance /
+registered-name forms do no module invalidation** (there is no address to
+invalidate); use the address form after editing code.
+
+Debugging tip: on a failed hot reload check the assembly manifest of
+`eng.layer.describe()` (3.5) and `reg.list_tools()` to confirm the name was
+really registered.
+
+---
+
+### 25.3 Model Development in Detail
+
+The model is the Agent's "brain". Integrating any model (local / cloud /
+private protocol) only requires implementing `ModelProvider`
+(`norpagent.protocols.model`).
+
+#### 25.3.1 Protocol
+
+```python
+class ModelProvider(Protocol):
+    model_id: str
+    def generate(self, messages, tools, params) -> ModelOutput: ...
+    def stream(self, messages, tools, params) -> Iterator[ModelStreamChunk]: ...  # optional
+```
+
+- `messages`: `List[ChatMessage]` (role: system / user / assistant / tool;
+  tool turns carry `tool_calls` / `tool_call_id`);
+- `tools`: a list of OpenAI function schemas (None when no tools);
+- `params`: runtime parameter dict (temperature / max_tokens / top_p / custom
+  keys), freely usable by the implementation;
+- `ModelOutput`: `content` / `reasoning` (chain of thought) / `tool_calls` /
+  `usage` (`ModelUsage`) / `finish_reason`;
+- `ModelStreamChunk`: streaming deltas `delta_content` / `reasoning` /
+  `tool_call_delta` / `usage` / `finish_reason`.
+
+**If `stream` is implemented, the kernel prefers the streaming path** (broadcasting
+`on_content` chunk by chunk); otherwise it falls back to one-shot `generate`.
+Implementing both is recommended.
+
+#### 25.3.2 Complete Example: An HTTP JSON Model Adapter
+
+```python
+# myapp/models/http_json.py -- any HTTP JSON protocol model
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, Iterator, List, Optional
+from urllib.request import Request, urlopen
+
+from norpagent.protocols.model import (
+    ChatMessage, ModelOutput, ModelProvider, ModelStreamChunk,
+    ModelUsage, ToolCallSpec,
+)
+
+
+class HttpJsonModel:
+    model_id = "http-json"
+
+    def __init__(self, endpoint: str, api_key: str = "", **kw):
+        self._endpoint = endpoint
+        self._api_key = api_key
+
+    def _payload(self, messages, tools, params):
+        body = {
+            "messages": [m.to_openai() for m in messages],
+            "temperature": params.get("temperature", 0.7),
+        }
+        if tools:
+            body["tools"] = tools
+        return body
+
+    def _post(self, body, timeout=60.0):
+        req = Request(self._endpoint, data=json.dumps(body).encode("utf-8"),
+                      headers={"Content-Type": "application/json"})
+        if self._api_key:
+            req.add_header("Authorization", f"Bearer {self._api_key}")
+        with urlopen(req, timeout=timeout) as resp:
+            return json.load(resp)
+
+    def generate(self, messages, tools, params) -> ModelOutput:
+        data = self._post(self._payload(messages, tools, params))
+        msg = data["choices"][0]["message"]
+        tool_calls = None
+        if msg.get("tool_calls"):
+            tool_calls = [
+                ToolCallSpec(id=tc["id"], name=tc["function"]["name"],
+                             arguments=json.loads(tc["function"]["arguments"] or "{}"))
+                for tc in msg["tool_calls"]
+            ]
+        usage = data.get("usage")
+        return ModelOutput(
+            content=msg.get("content") or "",
+            tool_calls=tool_calls,
+            usage=ModelUsage(
+                input_tokens=usage.get("prompt_tokens", 0),
+                output_tokens=usage.get("completion_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+            ) if usage else None,
+            finish_reason=data["choices"][0].get("finish_reason", "stop"),
+        )
+
+    def stream(self, messages, tools, params) -> Iterator[ModelStreamChunk]:
+        # optional streaming implementation; check the cancel event per chunk (below)
+        from norpagent.loops.cancel import cancel_requested
+        body = self._payload(messages, tools, params)
+        body["stream"] = True
+        with urlopen(Request(self._endpoint,
+                             data=json.dumps(body).encode("utf-8"),
+                             headers={"Content-Type": "application/json"}),
+                     timeout=120.0) as resp:
+            for line in resp:
+                if cancel_requested():           # engine stop / Ctrl+C: exit as early as possible
+                    return
+                line = line.decode("utf-8").strip()
+                if not line.startswith("data:"):
+                    continue
+                chunk = json.loads(line[5:])
+                delta = chunk["choices"][0].get("delta", {})
+                yield ModelStreamChunk(delta_content=delta.get("content") or "")
+```
+
+#### 25.3.3 Registration, Credential Fallback and Hot Reload
+
+```python
+# programmatic registration
+reg.register_model("my_http", HttpJsonModel(endpoint="http://127.0.0.1:8000/v1"))
+
+# npa() integration: name / address / instance, choose one
+npa(model="my_http")
+npa(model="myapp.models.http_json:create;endpoint=http://127.0.0.1:8000/v1")
+npa(model=HttpJsonModel(endpoint="..."))
+
+# hot reload: swap model / config / code (the address form invalidates the module cache)
+npa.remount(model="myapp.models.http_json:create;endpoint=http://127.0.0.1:9000/v1")
+```
+
+Notes:
+
+- **Credential fallback**: when the assembly layer finds no key at all
+  (`OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `ANTHROPIC_API_KEY` /
+  `DASHSCOPE_API_KEY` / `NORPAGENT_API_KEY`) it automatically falls back to
+  `mock` (21.1) — custom models should likewise give a readable error instead
+  of a bare raise when credentials are missing;
+- **Cancellation**: `params["_cancel_event"]` is the cancel event injected by
+  the kernel (also injected when `call_timeout=0`); check it per chunk in
+  streaming loops (4.6.2);
+- **DeepSeek V4 special case**: in tool turns, the assistant message's
+  `reasoning_content` must be echoed back verbatim (even an empty string);
+  `ChatMessage.to_openai()` already handles it (21.1);
+- The model slot is a **component slot** (`name_or_address` semantics); a hot
+  reload takes effect at the next run().
+
+---
+
+### 25.4 Session Development in Detail
+
+Sessions are the Agent's "memory": persistence and retrieval of conversation
+history. Implementing `SessionManager` (`norpagent.protocols.session`) lets you
+plug in any backend (file / database / cloud sync).
+
+#### 25.4.1 Protocol and Complete Example
+
+```python
+class SessionManager(Protocol):
+    def create_session(self, title: str = "") -> Session: ...
+    def get_session(self, session_id: str) -> Optional[Session]: ...
+    def append_message(self, session_id: str, message: ChatMessage) -> bool: ...
+    def history(self, session_id: str) -> List[ChatMessage]: ...
+    def list_sessions(self) -> List[Session]: ...
+    def delete_session(self, session_id: str) -> bool: ...
+```
+
+```python
+# myapp/sessions/jsonfile.py -- JSON file session storage
+import json, os, threading, time
+from norpagent.protocols.session import Session, SessionManager
+from norpagent.protocols.model import ChatMessage
+
+
+class JsonFileSessions:
+    """One .json file per session. All methods are thread-safe (lock-protected)."""
+
+    def __init__(self, root: str = "./sessions", **kw):
+        self._root = root
+        self._lock = threading.RLock()
+        os.makedirs(root, exist_ok=True)
+
+    def _path(self, sid):
+        return os.path.join(self._root, f"{sid}.json")
+
+    def create_session(self, title=""):
+        s = Session(id=f"s{int(time.time() * 1000)}", title=title,
+                    created_at=time.time())
+        with self._lock:
+            with open(self._path(s.id), "w", encoding="utf-8") as f:
+                json.dump({"title": title, "messages": []}, f, ensure_ascii=False)
+        return s
+
+    def get_session(self, session_id):
+        with self._lock:
+            p = self._path(session_id)
+            if not os.path.exists(p):
+                return None
+            data = json.load(open(p, encoding="utf-8"))
+            return Session(id=session_id, title=data.get("title", ""),
+                           created_at=os.path.getmtime(p),
+                           messages=[ChatMessage(**m) for m in data["messages"]])
+
+    def append_message(self, session_id, message):
+        with self._lock:
+            p = self._path(session_id)
+            if not os.path.exists(p):
+                return False
+            data = json.load(open(p, encoding="utf-8"))
+            data["messages"].append({
+                "role": message.role, "content": message.content,
+                "tool_call_id": message.tool_call_id,
+            })
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            return True
+
+    def history(self, session_id):
+        s = self.get_session(session_id)
+        return list(s.messages) if s else []
+
+    def list_sessions(self):
+        with self._lock:
+            return [self.get_session(fn[:-5]) for fn in os.listdir(self._root)
+                    if fn.endswith(".json")]
+
+    def delete_session(self, session_id):
+        with self._lock:
+            p = self._path(session_id)
+            if os.path.exists(p):
+                os.remove(p)
+                return True
+            return False
+
+
+def create(config=None, **kw):       # module-level factory
+    root = (config or {}).get("root", "./sessions")
+    return JsonFileSessions(root=root)
+```
+
+#### 25.4.2 Registration and Hot-Reload Semantics
+
+```python
+reg.register_session("jsonfile", lambda: JsonFileSessions(root="./sessions"))
+npa(session="jsonfile")                                   # name
+npa(session="myapp.sessions.jsonfile:create;root=./data")  # address
+npa.remount(session="myapp.sessions.jsonfile:create;root=./data")  # hot reload
+
+# continue a conversation across sessions via session_id
+r1 = eng.submit("Remember: my favorite color is blue")
+r2 = eng.submit("What is my favorite color?", session_id=r1.session_id)
+```
+
+**Hot-reload semantics differ from tools**: sessions are **assembly slots**;
+`remount` goes through "AgentRuntime hot rebuild" — stop the old runtime →
+build a new runtime per the current assembly → rebind the frontend renderer
+(grouping table in 3.7). In-flight tasks during the rebuild race with the
+rebuild; in production drain first, then swap (the "two-phase hot mount"
+recommendation in 3.7). Note: swapping the session implementation does not
+auto-migrate history — the old and new implementations each manage their own
+storage; continuing across implementations requires migrating the data yourself.
+
+---
+
+### 25.5 Sandbox Development in Detail
+
+A sandbox is the Agent's "isolated execution environment": `exec_cmd` /
+`run_python` and other tools execute through the sandbox protocol; swapping the
+sandbox implementation (container / remote / VM) **requires no changes to any
+tool code**.
+
+#### 25.5.1 Protocol
+
+```python
+class Sandbox(Protocol):                       # one created sandbox instance
+    def run_shell(self, command, timeout=60.0, cwd=None, env=None) -> SandboxResult: ...
+    def close(self) -> None: ...
+
+class PythonSandbox(Protocol):                 # optional capability: isolated Python execution
+    def run_python(self, code, tool_dispatch, timeout=60.0) -> SandboxResult: ...
+
+class SandboxProvider(Protocol):               # provider: creates sandbox instances on demand
+    kind: str
+    def create(self) -> Sandbox: ...
+
+class SandboxResult:                           # execution result
+    stdout: str; stderr: str; exit_code: int; timed_out: bool
+    # ok = exit_code == 0 and not timed_out
+```
+
+#### 25.5.2 Complete Example: A Docker Sandbox
+
+```python
+# myapp/sandboxes/docker_sb.py -- Docker container sandbox (illustrative)
+import subprocess
+from norpagent.protocols.sandbox import Sandbox, SandboxProvider, SandboxResult
+
+
+class DockerSandbox:
+    def __init__(self, image: str = "python:3.11-slim", **kw):
+        self._image = image
+
+    def run_shell(self, command, timeout=60.0, cwd=None, env=None):
+        try:
+            proc = subprocess.run(
+                ["docker", "run", "--rm", "-i", self._image, "sh", "-c", command],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            return SandboxResult(stdout=proc.stdout, stderr=proc.stderr,
+                                 exit_code=proc.returncode)
+        except subprocess.TimeoutExpired:
+            return SandboxResult(stderr="timeout", exit_code=-1, timed_out=True)
+        except FileNotFoundError:
+            return SandboxResult(stderr="docker not found", exit_code=-1)
+
+    def close(self):
+        pass                                        # docker run --rm cleans up automatically
+
+
+class DockerSandboxProvider:
+    kind = "docker"
+
+    def __init__(self, image="python:3.11-slim", **kw):
+        self._image = image
+
+    def create(self):
+        return DockerSandbox(image=self._image)
+
+
+def create(config=None, **kw):
+    return DockerSandboxProvider(image=(config or {}).get("image", "python:3.11-slim"))
+```
+
+```python
+reg.register_sandbox("docker", lambda: DockerSandboxProvider(image="python:3.11"))
+npa(sandbox="docker")
+npa(sandbox="myapp.sandboxes.docker_sb:create;image=python:3.12-slim")
+npa.remount(sandbox="myapp.sandboxes.docker_sb:create;image=python:3.12-slim")
+```
+
+Development key points:
+
+- **Timeout and cancellation**: `run_shell`'s `timeout` must be honored
+  (`subprocess.run`'s timeout suffices); when the engine stops, the cancel
+  event is set (4.6.2); long tasks should check in slices (the built-in pooled
+  sandbox checks every ≤0.5s and force-kills the process tree);
+- **Process-tree cleanup**: the child process tree of `sh -c` must be killed
+  together on timeout (on Windows use `taskkill /T`, see 21.4);
+- **`close` must be idempotent**: a sandbox may be closed from multiple places
+  — `shutdown` / hot rebuild / task end.
+
+---
+
+### 25.6 Scheduler Development in Detail
+
+A scheduler is the Agent's "orchestration": task queueing, execution order,
+concurrency policy. Tools such as `task_submit` / `task_list` and multi-agent
+orchestration are all built on top of it.
+
+#### 25.6.1 Protocol and Complete Example
+
+```python
+class TaskScheduler(Protocol):
+    def submit(self, task: AgentTask) -> str: ...           # enqueue; returns the task id
+    def pending(self) -> int: ...                           # number of pending tasks
+    def drain(self, run_task) -> List[TaskResult]: ...      # execute all pending tasks in order
+```
+
+```python
+# myapp/schedulers/priority.py -- priority scheduler (smaller number runs first)
+import heapq
+from norpagent.protocols.scheduler import AgentTask, TaskScheduler
+
+
+class PriorityScheduler:
+    def __init__(self, **kw):
+        self._heap = []                       # [(priority, seq, task)]
+
+    def submit(self, task):
+        priority = int(task.params.get("priority", 0))   # priority comes from the task params
+        heapq.heappush(self._heap, (priority, id(task), task))
+        return task.id
+
+    def pending(self):
+        return len(self._heap)
+
+    def drain(self, run_task):
+        results = []
+        while self._heap:
+            _p, _seq, task = heapq.heappop(self._heap)
+            results.append(run_task(task))    # run_task is injected by the runtime
+        return results
+
+
+def create(**kw):
+    return PriorityScheduler()
+```
+
+```python
+reg.register_scheduler("priority", lambda: PriorityScheduler())
+npa(scheduler="priority")
+npa.remount(scheduler="myapp.schedulers.priority:create")
+```
+
+Key point: `drain`'s `run_task` callback is injected by the runtime (decoupling
+the agent loop from the scheduler; with multi-agent it can point to a different
+agent). The built-in `persistent` implementation (21.5) resumes after a crash
+via `resume()`; a custom scheduler can follow it.
+
+---
+
+### 25.7 Frontend and Renderer Development in Detail
+
+The frontend is a two-layer structure (5.1): **frontend** (input/output shell,
+Frontend protocol) + **ui** (event renderer, UIAdapter protocol).
+
+#### 25.7.1 Protocol
+
+```python
+class Frontend(Protocol):              # user interaction shell
+    frontend_id: str
+    def attach(self, engine) -> None: ...   # bind the engine: engine.submit / request_stop
+    def start(self) -> None: ...            # start (usually spawns a background thread)
+    def stop(self) -> None: ...             # stop (thread-safe)
+    def is_alive(self) -> bool: ...
+
+class UIAdapter(Protocol):             # event renderer
+    ui_id: str
+    def on_event(self, event) -> None: ...  # render one AgentEvent
+    def ask_user(self, question, default="") -> str: ...
+    def notify(self, message, level="info") -> None: ...
+```
+
+#### 25.7.2 Complete Example: A Toast-Notification Frontend (Simplified)
+
+```python
+# myapp/frontends/toast.py -- no input, notifications only (good for desktop assistants)
+import threading
+from norpagent.frontends.base import Frontend
+
+
+class ToastFrontend:
+    frontend_id = "toast"
+
+    def __init__(self, **kw):
+        self._engine = None
+        self._stop = threading.Event()
+
+    def attach(self, engine):
+        self._engine = engine
+        # subscribe to the event bus: only care about final results
+        engine.registry.bus.subscribe("on_task_done", self._on_done)
+
+    def _on_done(self, event):
+        result = event.get("result")
+        if result is not None:
+            print(f"[notice] task done: {result.final_content[:80]}")
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        while not self._stop.wait(0.2):
+            pass
+
+    def stop(self):
+        self._stop.set()
+
+    def is_alive(self):
+        return not self._stop.is_set()
+
+
+def create(**kw):
+    return ToastFrontend()
+```
+
+```python
+npa(frontend="myapp.frontends.toast:create")
+# or runtime hot replacement (infrastructure slot: stop the old, start the new; on failure roll back to the old)
+npa.remount(frontend="myapp.frontends.toast:create")
+```
+
+Key point: the frontend **does not render directly** — rendering is the job of
+the ui renderer (`npa(ui=...)`); the frontend is responsible for "read input →
+submit, receive events → hand them to the renderer". The built-in Web frontend
+and WebUI renderer are the reference implementation (Chapter 22).
+
+---
+
+### 25.8 Event-Loop Development in Detail
+
+The event loop decides how tasks are scheduled: thread model, interruption
+method, wakeup method. The default `NasyncioLoopRuntime` covers most scenarios;
+special scenarios (embedded, tests, custom scheduling) can replace it by
+implementing the `LoopRuntime` protocol (4.2).
+
+```python
+class LoopRuntime(Protocol):
+    name: str
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def is_running(self) -> bool: ...
+    def join(self, timeout=None) -> None: ...
+    def submit(self, fn, *args, **kwargs) -> Any: ...   # run in the loop context and block for the result
+```
+
+```python
+# myapp/loops/sync_loop.py -- synchronous direct-run loop (tests / embedded)
+class SyncLoop:
+    name = "sync"
+
+    def __init__(self, **kw):
+        self._running = False
+
+    def start(self):
+        self._running = True
+
+    def stop(self):
+        self._running = False
+
+    def is_running(self):
+        return self._running
+
+    def join(self, timeout=None):
+        pass
+
+    def submit(self, fn, *args, **kwargs):
+        return fn(*args, **kwargs)          # execute synchronously, directly
+
+
+def create(**kw):
+    return SyncLoop()
+```
+
+```python
+npa(async_loop="myapp.loops.sync_loop")          # address (auto-resolves the module-level create)
+npa(async_loop=SyncLoop())                        # instance
+npa.remount(async_loop="myapp.loops.sync_loop")   # hot reload (stop the old, start the new)
+```
+
+Development key points (engineering lessons from 4.5 / 4.6):
+
+- `submit` is a **blocking** contract: the engine waits for the result on the
+  calling thread; the implementation must honor that;
+- long tasks go on the **daemon thread pool**, never the loop thread (a stuck
+  loop thread = all scheduling paralyzed);
+- implement the cancel signal (checkable via `cancel_requested`) and Ctrl+C
+  polling wait (the main thread is not at the loop entry, see 4.6.1);
+- when replacing the loop, in-flight tasks are abandoned (grouping table in
+  3.7); replace when there are no tasks.
+
+---
+
+### 25.9 Generic Component Development in Detail
+
+"Extra capability" modules (context store, project manager, task storage,
+vector store...) do not use dedicated slots; they use the **open component
+namespace** (2.6.3): `kind` is the category (arbitrarily extensible), `name`
+is the component name, `factory` is the factory.
+
+#### 25.9.1 Registration and Usage
+
+```python
+# myapp/components/redis_store.py -- example: Redis context store
+class RedisContextStore:
+    def __init__(self, host="127.0.0.1", port=6379, **kw):
+        self._host, self._port = host, port
+
+    def add(self, session_id, text, meta=None):
+        ...                                            # implement add / search / list / delete
+
+    def search(self, query, limit=10):
+        ...
+
+    def close(self):
+        ...
+
+
+def create(config=None, **kw):
+    return RedisContextStore(host=(config or {}).get("host", "127.0.0.1"))
+```
+
+```python
+# registration (kind context_store already has the built-in fts5; add a redis implementation)
+reg.register_component("context_store", "redis",
+                       lambda: RedisContextStore(host="127.0.0.1"))
+
+# npa() integration (context_store slot: address / name_or_address semantics)
+npa(context_store="redis")
+npa(context_store="myapp.components.redis_store:create;host=10.0.0.5")
+
+# custom new kind: any kind can be registered; declare the reference in a preset
+reg.register_component("vector_store", "pg", lambda: PgVectorStore())
+Preset(name="mine", components={"context_store": "redis",
+                                "vector_store": "pg"})
+```
+
+Usage from the tool side:
+
+```python
+store = ctx.component("vector_store")          # get by kind; None if absent
+```
+
+#### 25.9.2 Hot Reload and Factory Injection
+
+- `context_store` / `project_manager` are **assembly slots**: `remount` hot
+  rebuilds the AgentRuntime (grouping table in 3.7);
+- a factory declaring a `workspace_root` parameter (or **kwargs) gets the
+  workspace root injected automatically (2.6.3);
+- custom slots can also register generic components (the `vector_store` slot
+  example in 3.8; the full version in 25.10.4).
+
+---
+
+### 25.10 Slot Development in Detail (Key Section)
+
+25.2 ~ 25.9 develop "implementations of slots"; this section develops **the
+slot itself** — registering a brand-new slot name that gets the exact same full
+pipeline as the 18 built-in slots (`npa()` argument validation, ArchLayer
+assembly, `npa.remount()` hot replacement, `layer.describe()` manifest). 3.8
+gives the contract overview; this section gives the full development flow.
+
+#### 25.10.1 The Essence of a Slot
+
+A slot = **name + string semantics + application logic (applier)**:
+
+- `name`: the slot name, i.e. the keyword-argument name of `npa()` (must be a
+  valid Python identifier);
+- `string_semantics`: how string values are interpreted — `address` (module
+  address) / `name` (registry component name) / `name_or_address` (name first,
+  then address) / `literal` (literal value, address preferred) (3.3);
+- `applier(reg, layer, value, params, ctx)`: called by the assembler when the
+  slot value is non-empty, to "apply" the value to the system (register a
+  component / subscribe hooks / write extras).
+
+#### 25.10.2 All SlotSpec Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | str | slot name (required) |
+| `description` | str | description (visible in the `layer.describe()` manifest) |
+| `protocol` | str | protocol description (human-readable) |
+| `default_address` | Optional[str] | default implementation address (used when the slot is not filled) |
+| `string_semantics` | str | `address` / `name` / `name_or_address` / `literal` |
+| `factory_kwargs` | Dict[str, str] | extra factory keys (injected call context) |
+| `examples` | List[str] | examples (for docs / hints) |
+| `defer_factory` | bool | defer factory creation to the engine assembly phase (used by agent_runtime) |
+| `applier` | callable | application logic (called when the slot value is non-empty) |
+| `remount_rebuild_agent` | bool | whether to hot-rebuild the AgentRuntime after hot replacement |
+
+#### 25.10.3 The Applier Contract and Reentrancy Safety
+
+```python
+def applier(reg, layer, value, params, ctx): ...
+```
+
+- `value`: the resolved slot value — under `address` semantics it is the
+  instantiated implementation (the `;key=value` sub-config is obtained via
+  `layer.subconfig(slot)`); under `name` / `name_or_address` / `literal`
+  semantics it is the original value;
+- `ctx` provides four mutable containers:
+  - `ctx["components"]`: the final preset component declarations
+    `{kind: name}` (for registering generic components; the AgentRuntime builds
+    `ctx.components` from them);
+  - `ctx["extras"]`: engine extra objects (consumed via
+    `engine.extras[slot_name]`);
+  - `ctx["overrides"]`: preset field overrides (may rewrite preset fields);
+  - `ctx["meta"]`: registry architecture metadata recording the **unsubscribable
+    objects** you mounted (used for cleanup at hot reload);
+- **reentrancy safety is a hard requirement**: the same registry calls the
+  applier repeatedly (assembly + every `npa.remount`); repeated execution must
+  not stack side effects — before re-subscribing to the event bus, unsubscribe
+  the objects recorded in `ctx["meta"]` (the built-in hooks / security /
+  plugins slots are the reference implementations);
+- `remount_rebuild_agent=True`: assembly-type slots whose applier registers
+  generic components into the preset `components` should set True (hot rebuild
+  after hot replacement, taking effect immediately).
+
+#### 25.10.4 Complete Example: Developing a "Vector Search" Slot
+
+Goal: add a new `vector_store` slot — pass in any vector-store implementation
+(instance / factory / module address), register it as a `vector_store`-kind
+generic component, tools access it via `ctx.component("vector_store")`; it
+takes effect immediately after hot replacement.
+
+```python
+# myapp/slots/vector_store.py
+from norpagent.arch import SlotSpec, register_slot
+
+
+def _apply_vector_store(reg, layer, value, params, ctx):
+    # 1. the resolved value is the implementation (instance / factory / module
+    #    object) -- the arch layer resolves and instantiates address forms
+    #    before calling the applier
+    factory = value if callable(value) else (lambda v=value: v)
+    # 2. register as a generic component (fixed name; overwrite semantics)
+    reg.register_component("vector_store", "_arch_vector", factory)
+    # 3. write the preset component declaration -> AgentRuntime builds ctx.components
+    ctx["components"]["vector_store"] = "_arch_vector"
+    # 4. write extras (engine side can access engine.extras["vector_store"] directly)
+    ctx["extras"]["vector_store"] = value
+
+
+register_slot(SlotSpec(
+    name="vector_store",
+    description="vector-search component (custom assembly-slot example)",
+    protocol="any vector-store implementation (registered as a vector_store generic component)",
+    string_semantics="literal",        # the value is passed to the applier as-is (incl. address resolution)
+    applier=_apply_vector_store,
+    remount_rebuild_agent=True,        # hot rebuild after hot replacement so the component takes effect immediately
+))
+```
+
+Usage (the experience is identical to the built-in slots):
+
+```python
+import norpagent as npa
+
+npa(vector_store=MyVectorStore())                     # instance
+npa(vector_store="myapp.vector:create;index=./idx")   # address + clause (literal's address-first semantics)
+npa.remount(vector_store=OtherStore())                # hot replacement: AgentRuntime hot rebuild
+print(npa.current().engine.extras["vector_store"])    # consume extras
+# inside a tool: ctx.component("vector_store")
+```
+
+The "address-first" semantics of `string_semantics="literal"` (item 2 of 3.3):
+a string **looking like a pure address** (dotted identifier containing `.` /
+`:`) is loaded as an address (resolution failure raises `AddressError`);
+anything else keeps its literal value — so the `"myapp.vector:create;index=
+./idx"` above is resolved, instantiated, and then passed to the applier.
+
+#### 25.10.5 Hot-Reload Red Line: Dict Key-Value Values Must Be Valid Modules (Key Point)
+
+**This is the single most important rule of slot development and hot reload.**
+It shares its origin with the tool-mapping red line in 25.2.6, but applies
+more broadly:
+
+> For **dict key-value pairs** in any slot value (tools mapping / hooks mapping
+> / custom-slot dict values, **nested dicts recursively**), if the value is a
+> **pure-address-like string** (`is_address_like`: dotted identifier containing
+> `.` or `:`), the assembler resolves it as a **module address** — hot reload
+> (`npa.remount`) and startup assembly (`npa()`) are treated identically. **On
+> resolution failure it raises `AddressError`; the hot reload fails; there is
+> never a silent fallback.**
+
+The value of a key-value pair must be one of the following three "valid
+modules":
+
+| Value form | Example | Result |
+|---|---|---|
+| registered name (name-semantics slot) | `tools={"a": "echo"}` | name reference |
+| valid module address (importable + attribute exists) | `tools={"a": "myapp.tools:create"}` | loaded and instantiated (factory convention) |
+| valid instance / factory object | `tools={"a": MyTool()}` | used as-is |
+| address-like but invalid (typo / module missing / attribute missing) | `tools={"a": "myapp.tolls:create"}` | **AddressError; failure** |
+
+Why it must be strict: hot reload is an online ops action. If an address typo
+fell back silently, the old / an empty implementation would quietly stay
+online — much harder to debug than an explicit failure. So "if you wrote an
+address it must raise explicitly". The implementation lives in
+`_resolve_dict_values` in `norpagent/arch/layer.py` (uniform dict-value
+handling, nested recursion, raise on resolution failure).
+
+```python
+# custom-slot dict values: just as strict at hot reload
+npa.remount(vector_store={"embedder": "myapp.embed:create",   # valid address -> resolved
+                         "index": "./idx"})                   # not address-like -> literal value
+npa.remount(vector_store={"embedder": "myapp.embd:create"})    # typo -> AddressError
+```
+
+Exceptions and boundaries:
+
+- **hooks-slot exception**: the hooks mapping's values are "callbacks
+  themselves"; an address pointing to a callback function is **kept verbatim,
+  not called** (item 3 of 3.3) — but the address must still resolve (module /
+  attribute exists), otherwise it raises too;
+- **list elements are not resolved**: lists keep literal semantics (e.g. the
+  directory path in `plugins=["./dir"]`; tools list elements get the special
+  "name or address" treatment by the assembler, see item 4 of 3.3);
+- **non-address strings are unaffected**: strings without dotted identifiers
+  such as `"high"`, `"./data"`, `"sqlite"` keep literal / name semantics.
+
+**The module cache is invalidated before hot reload**: `remount` deletes the
+.pyc for string addresses, pops `sys.modules`, then re-imports (3.7). Edit
+code → remount and it takes effect; instance forms do no cache invalidation.
+To debug a failed hot reload use `layer.describe()` for the assembly manifest
+and the `AddressError` traceback to locate the address.
+
+---
+
+### 25.11 Plugin Development in Detail (Key Section)
+
+A plugin = a set of tools + a set of lifecycle hooks + metadata, distributed as
+an independent `.py` file (or a manifest package). When the host loads it, it
+automatically gets the full security protection: signature verification / AST
+audit / import restrictions / network policy / human approval (Chapter 11).
+This section gives plugin authors a complete development example. Companion
+standalone doc: `norpagent插件开发指南.md` (Chinese plugin development guide).
+
+#### 25.11.1 Complete Single-File Plugin Example
+
+```python
+# my_plugins/weather_plugin.py -- complete plugin: tools + hooks + approval hints
+PLUGIN_NAME = "Weather Plugin"
+PLUGIN_VERSION = "1.0.0"
+PLUGIN_PUBLISHER = "xingluosama121"
+PLUGIN_DESCRIPTION = "Query city weather; greet at task start."
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "weather",
+            "description": "Query the current weather of a city.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string", "description": "city name"},
+                },
+                "required": ["city"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+# approval hints: weather needs no approval (read-only); undeclared tools follow the host master switch
+APPROVAL_HINTS = {
+    "weather": {"approval": "none", "risk": "L0"},
+}
+
+
+def execute(tool_name, args, ctx):
+    """Unified tool entry: handle and return str / None; unhandled returns None."""
+    if tool_name == "weather":
+        city = args.get("city") or "Beijing"
+        return f"{city}: sunny today, 25 C"   # example implementation; replace with a real API
+    return None
+
+
+# lifecycle hook (one of the 15; names aligned with the legacy app hooks;
+# signature: business params first, ctx last)
+def on_task_start(prompt, ctx):
+    print(f"[plugin] new task: {prompt[:50]}")
+
+
+def before_tool_call(tool_name, args, ctx):
+    """Mutating hook: returning a dict can rewrite the args (11.5)."""
+    if tool_name == "weather" and "city" not in args:
+        args = dict(args)
+        args["city"] = "Beijing"                  # default-city fallback
+    return args
+```
+
+Loading (host side):
+
+```python
+from norpagent.plugins import install_plugin_dirs
+loader = install_plugin_dirs(reg, ["./my_plugins"], config={})
+for info in loader.plugins:
+    print(info.name, info.enabled, info.error or "ok")
+
+# one-shot load via the npa() slot
+npa(plugins=["./my_plugins"])
+```
+
+#### 25.11.2 Manifest Package Format
+
+Directory distribution: `my_pkg/` contains `manifest.json` + an entry module
+(default `plugin.py`):
+
+```json
+{
+  "name": "my_pkg",
+  "version": "1.0.0",
+  "publisher": "xingluosama121",
+  "description": "package-style plugin",
+  "entry": "plugin.py",
+  "isolation": "process",
+  "permissions": [],
+  "signature": ""
+}
+```
+
+The only difference from a single-file plugin is that the entry module carries
+the same module-level interfaces (`PLUGIN_NAME` / `TOOLS` / `execute` / hooks...).
+
+#### 25.11.3 Lifecycle Hooks (15)
+
+A plugin may define the following hook functions at module level (signature
+convention: **business params first, PluginContext last**; `ctx` provides
+`plugin_name` / `project_root` / `app_dir` / `config` / `current_step`):
+
+| Hook | Timing | Mutating |
+|---|---|---|
+| `on_task_start(prompt, ctx)` | task starts | no |
+| `on_task_done(result, ctx)` | task ends | no |
+| `before_step(step, ctx)` | each step starts | yes (return value passes through to the kernel) |
+| `after_step(step, result, ctx)` | each step ends | yes |
+| `before_model_call(messages, ctx)` | before a model call | yes |
+| `after_model_call(output, ctx)` | after a model call | yes |
+| `before_tool_call(tool_name, args, ctx)` | before a tool runs | yes (may rewrite args) |
+| `after_tool_call(tool_name, result, ctx)` | after a tool runs | yes |
+| `on_content(content, ctx)` | streaming output delta | no |
+| `on_error(error, ctx)` | an error occurs | no |
+| ...... | (15 in total; 11.5 / Appendix E) | |
+
+#### 25.11.4 Isolation, Signing and Publishing
+
+- **Process-level isolation**: declare `ISOLATION = "process"` at the module
+  header; the plugin code then only loads and runs in a host child process;
+  tools return results via RPC and hooks are forwarded with a time limit
+  (11.7) — a crashing plugin never drags down the main process;
+- **Signing** (11.8): `python -m norpagent plugin-sign --gen` generates a key
+  pair; `plugin-sign my_plugin.py --key <private-key-hex>` produces a signature
+  (written into the file header); after the host adds the public key to
+  `plugin_trusted_keys`, the plugin is trusted and the audit relaxes to warn;
+- **Publishing**: a single-file plugin ships as a `.py`; a package plugin ships
+  as a zipped directory.
+
+#### 25.11.5 Debugging and Hot Reload
+
+```python
+# development phase: library facade
+from norpagent.plugins import PluginSystem
+ps = PluginSystem(reg, ["./my_plugins"], config={"plugin_isolation": "inproc"})
+infos = ps.load()
+ps.status()                 # plugin manifest + isolation-host status
+ps.reload("weather_plugin")  # dev-phase hot reload of one plugin
+ps.shutdown()               # release the isolation host
+
+# whole-set replacement at runtime (the framework unsubscribes old subscriptions
+# before reinstalling, so nothing stacks)
+npa.remount(plugins=["./my_plugins_v2"])
+
+# troubleshooting: inspect PluginInfo
+for info in ps.loader.plugins:
+    if not info.enabled:
+        print(info.name, info.error, info.audit_issues)
+```
+
+Debugging tips: `plugin_security_audit: "warn"` only warns, never blocks;
+`plugin_isolation: "inproc"` runs in-process for easy breakpoint debugging;
+switch back to `auto` before going live (AST-reads `ISOLATION` statically; with
+process isolation **the plugin code is never executed** by the host).
+
+---
+
+### 25.12 Development Checklist
+
+Self-check every item before delivering a new module (corresponding sections
+of this chapter):
+
+| # | Check item | Section |
+|---|---|---|
+| 1 | implements the full protocol (depends only on protocols, never on concrete implementation classes) | 25.1.4 |
+| 2 | the factory supports signature-based injection (`layer` / `slot` / `config` / `workspace_root`) | 3.4 |
+| 3 | registered in the Registry (`register_*` or `register_component`); the name does not collide with built-ins | 25.2.5 |
+| 4 | at least one integration way verified (name / address / instance); the address form is hot-reloadable | 25.2.5 |
+| 5 | **hot-reload verification**: dict key-value values are valid modules (registered name / resolvable address / instance); a misspelled address raises `AddressError` instead of falling back silently | 25.2.6 / 25.10.5 |
+| 6 | edit implementation code → remount → new code takes effect (address form invalidates the module cache) | 3.7 |
+| 7 | long / streaming paths check the cancel signal (`cancel_requested`) | 25.2.4 |
+| 8 | timeouts honored: sandbox `timeout`, model `call_timeout`, network timeouts | 25.5.2 |
+| 9 | thread-safe: use locks / immutable data when concurrent tasks share an instance | 25.4.1 |
+| 10 | `close()` is idempotent; may be called from shutdown / hot rebuild / task end | 25.5.2 |
+| 11 | no exception leaks: tools return `ToolResult(success=False)`, model adapters catch network exceptions | 25.2.1 |
+| 12 | the assembly manifest is observable: `layer.describe()` shows your implementation | 3.5 |
+| 13 | no upward dependencies (dependency direction points strictly downward) | 2.6.1 |
+| 14 | docs and examples (SlotSpec.examples / module docstring) | 25.10.2 |
+
+Completing these 14 items puts your module on exactly the same footing as the
+built-in components: assemblable, hot-reloadable, auditable, replaceable.
+
+---
+
+## Chapter 26 Registration Flow in Detail
+
+Chapter 25 explains how to develop modules, slots, plugins and tools. This
+chapter explains the act of **registration** itself: how the **Registry**,
+the **slot table (SLOT_SPECS)** and the **address resolver** cooperate, which
+steps a component goes through from "registered" to "actually used by the
+Agent", and the three registration timings, four value forms, validation and
+error handling. After reading this chapter you should be able to answer three
+questions:
+
+1. Which container does a component register into? (the Registry's 9 namespaces)
+2. How does the framework find it after registration? (name / address / instance)
+3. What happens between pressing `npa()` and a tool being called? (the assembly pipeline)
+
+### 26.1 The Registration Landscape: Responsibilities of the Three Concepts
+
+Registration is not a single action; it is the cooperation of three existing
+mechanisms:
+
+| Mechanism | Module | Responsibility | Typical API |
+|---|---|---|---|
+| Registry | `norpagent.kernel.registry` | **stores** the "name → implementation" mappings; part of the kernel, unaware of any concrete implementation | `register_*` / `resolve_*` / `build_*` / `list_*` |
+| Slot table (SLOT_SPECS) | `norpagent.arch.slots` | **describes** the mount points: 18 built-in slots + runtime hot-pluggable `register_slot` | `get_slot` / `snapshot_slots` / `register_slot` |
+| Address resolver | `norpagent.arch.address` | **locates**: turns a string address (`pkg.mod[:attr]`) into an object | `resolve_address` / `is_address_like` |
+| Assembler | `norpagent.runtime.mount` | **installs**: translates slot values into registry entries and preset overrides | `build_registry` / `apply_slot_overrides` |
+
+One sentence distinguishes the three: **a slot is a mount point (what to fill),
+the Registry is the namespace (what is stored), and an address is a locating
+mechanism (how to find it)**. The assembler ties them together.
+
+- A slot value that is a **registered name** (e.g. `"sqlite"`) → the assembler
+  looks it up in the Registry and writes the name into the final preset;
+- A slot value that is an **address** (e.g. `"myapp.session:create"`) → the
+  assembler resolves the address to a factory, registers it under an internal
+  name (`_arch_session`) and writes that name into the final preset;
+- A slot value that is an **instance / factory** → likewise registered under an
+  internal name and referenced.
+
+### 26.2 The Registry: 9 Namespaces
+
+`Registry` (`norpagent.kernel.registry`) holds 9 independent namespaces, each
+a "name → implementation" dict:
+
+| Namespace | Register API | Resolve / Build API | Stored content |
+|---|---|---|---|
+| models | `register_model(name, provider)` | `resolve_model(name)` | model provider instance |
+| tools | `register_tool(name, tool)` | `resolve_tool(name)` | Tool instance |
+| sessions | `register_session(name, factory)` | `build_session(name)` | factory (new instance each time) |
+| sandboxes | `register_sandbox(name, factory)` | `build_sandbox(name)` | factory (new instance each time) |
+| schedulers | `register_scheduler(name, factory)` | `build_scheduler(name)` | factory (new instance each time) |
+| uis | `register_ui(name, adapter)` | `resolve_ui(name)` | UIAdapter instance |
+| plugins | `register_plugin(plugin)` | `unregister_plugin(name)` | Plugin object (tools + hooks) |
+| presets | `register_preset(preset)` | `resolve_preset(name)` | Preset instance |
+| components | `register_component(kind, name, factory)` | `build_component(kind, name, workspace_root=...)` | any kind: `kind → {name: factory}` |
+
+Key points:
+
+- **`resolve_*` vs `build_*`**: `resolve_*` returns the object as registered;
+  `build_*` invokes the factory and **creates a new instance each time** —
+  sessions, sandboxes and schedulers are built on demand (each task may get
+  its own), while models, tools and UIs are shared (one instance reused
+  globally). Therefore you must pass a **factory** (function or class) when
+  registering sessions / sandboxes / schedulers, and an **instance** for
+  models / tools / UIs.
+- **Name-override semantics**: plain dict assignment; a later registration
+  silently overrides an earlier one. When a plugin registers a tool whose name
+  already exists, it prints `[Registry] tool xxx already exists, overridden by
+  plugin xxx` and then overrides.
+- **Thread safety**: protected by an internal RLock; any thread may register /
+  resolve at any time.
+- **Components are an open namespace**: `kind` is not limited to built-ins
+  (`context_store` / `project_manager` ...); third parties can register brand
+  new kinds (e.g. `vector_store`) without touching the kernel (25.9.1).
+- `register_plugin` is a compound registration: plugin tools enter the tool
+  table one by one, hooks subscribe to the event bus one by one, and the
+  plugin object enters the plugin table; `unregister_plugin` unsubscribes the
+  hooks and removes the plugin record (tool entries remain under name-override
+  semantics, unreachable when not in the preset's tool set).
+
+### 26.3 The Four Value Forms and String Semantics
+
+A component moves from the developer's hands into the Registry in one of four
+forms:
+
+| Form | Example | Notes |
+|---|---|---|
+| Instance | `npa(tools=[MyTool()])` | directly usable; the assembler wraps it in a factory returning the same instance |
+| Factory function / class | `npa(model="myapp.model:create")` resolves to a callable | signature-based context injection (`layer` / `slot` / `config` / `workspace_root`, section 3.4) |
+| Registered-name reference | `npa(model="openai_compat")` | the string is looked up in the Registry first; found → name reference |
+| Address string | `npa(model="myapp.model:create")` | name lookup fails → resolved as an address |
+
+A string entering a slot is interpreted by that slot's **string semantics**
+(`SlotSpec.string_semantics`, one of four):
+
+| Semantics | Meaning | Example slots |
+|---|---|---|
+| `address` | the string is a module address (`pkg.mod[:attr]`), must resolve | `async_loop` / `frontend` / `context_store` / `project_manager` |
+| `name` | the string is a registered component name, passed through as-is | `tools` |
+| `name_or_address` | look up the Registry name first; if not found, resolve as an address | `model` / `session` / `sandbox` / `scheduler` / `ui` / `preset` |
+| `literal` | the string is a literal value (level / path / directory); since v0.9.1, strings shaped like a pure address (dotted identifier containing `.` or `:`) are loaded by address | `hooks` / `security` / `plugins` / `logger` / `storage` / `error_handler` |
+
+Since v0.9.1, **dict key-value pairs** of every slot uniformly support
+address resolution (`_resolve_dict_values` in `layer.py`, recursive for
+nested dicts):
+
+- a value shaped like a pure address → resolved to an object; a resolution
+  failure raises `AddressError` — **no silent fallback** (the red line,
+  section 25.2.6);
+- a resolved callable → invoked by the factory convention (except the `hooks`
+  slot: values are callbacks themselves and are kept as-is, never invoked);
+- non-string values pass through unchanged.
+
+Addresses support **extra config clauses**: `"pkg.mod:create;port=9000;theme=dark"`
+— the `key=value` pairs after the semicolon are parsed into a dict injected
+into the factory's `config` parameter (sections 3.3 / 3.4).
+
+### 26.4 The Full Pipeline from Registration to Assembly (npa() Startup)
+
+Follow the complete chain with `npa(model="myapp.model:create", tools={"weather": "myapp.weather_tool:create"})`:
+
+```
+npa(...) startup
+│
+├─ 1. launch() splits parameters (runtime/__init__.py)
+│     by the "live slot-table snapshot":
+│     - slot keys (model / tools / ...) → slot_values
+│     - other keys (max_steps / workspace_root / ...) → runtime params
+│
+├─ 2. ArchLayer(config, **slot_values) + mount_defaults(layer)
+│     registers the built-in default factories (async_loop / frontend / agent_runtime)
+│
+├─ 3. layer.connect() (idempotent; resolves slot by slot)
+│     - model (name_or_address): the string is left untouched, passed to the
+│       assembler for the name-first decision
+│     - tools (dict): _resolve_dict_values resolves key-value pairs
+│       recursively — the value "myapp.weather_tool:create" is address-like
+│       → resolve_address imports myapp.weather_tool → takes the create
+│       attribute (callable) → call_factory invokes it by signature
+│       → a WeatherTool instance
+│
+├─ 4. build_registry(layer, params) (runtime/mount.py)
+│     a. Registry() creates an empty registry
+│     b. install_defaults(reg)    built-in components enter the table
+│        (models openai_compat / anthropic / mock; 21 built-in tools;
+│         sessions sqlite / memory; sandboxes pooled / subprocess;
+│         scheduler persistent; ...)
+│     c. register_all_presets(reg)  six built-in presets enter the table
+│        (standard etc.)
+│     d. apply_slot_overrides(reg, layer, params) assembles in fixed order:
+│        ├─ preset slot → baseline preset (default standard)
+│        ├─ model: address resolved → register_model("_arch_model", factory)
+│        │    → overrides["model"] = "_arch_model"
+│        ├─ tools: dict → register_tool("weather", instance) one by one
+│        │    → overrides["tools"] = ["weather"] (only yours are enabled)
+│        ├─ session / sandbox / scheduler: registered as _arch_xxx or referenced
+│        ├─ ui: register_ui("_arch_ui", instance) → extras["ui_adapter"]
+│        ├─ context_store / project_manager: register_component(kind,
+│        │    "_arch_xxx", factory) → written into the components declaration
+│        ├─ hooks: previous architecture-level subscriptions unsubscribed
+│        │    first → bus.subscribe re-mounted
+│        ├─ security: safe() installs the kit (recorded in meta, unsubscribable)
+│        ├─ plugins: install_plugin_dirs runs the full load pipeline
+│        ├─ logger / storage / error_handler → extras (consumed by the engine)
+│        ├─ custom slots: iterate snapshot_slots(); for each spec with a
+│        │    non-None applier, call applier(reg, layer, value, params, ctx)
+│        └─ assemble the final Preset(...) (slot overrides + baseline merge)
+│           → reg.register_preset(final)
+│
+├─ 5. NorpEngine(layer, registry, preset, loop, frontend, extras)
+│     engine.start() → _build_agent():
+│       call_factory(agent_runtime slot implementation, {registry, preset, ui,
+│       task_params, layer, config}) → AgentRuntime constructed
+│
+└─ 6. Consumption (engine.submit(text) → agent.run())
+      registry.resolve_model(preset.model)    → the model instance
+      registry.tool_schemas(preset.tools)     → the tool schema list
+      registry.resolve_tool(name)             → the tool instance (on call)
+      registry.build_session(preset.session)  → session instance (on demand)
+      registry.build_sandbox(preset.sandbox)  → sandbox instance (on demand)
+```
+
+Three key conclusions:
+
+1. **Registration happens in the assembler; consumption happens in the Agent
+   runtime** — once your component is in the table, the core code works with
+   it with zero changes;
+2. **Every slot value ends up as "a registry entry + a preset declaration"**:
+   the internal names (`_arch_xxx`) are the assembler's universal device,
+   making "your implementation" and "the built-in implementation" consumed
+   through exactly the same path;
+3. **Order matters**: the preset sets the baseline first, then each slot
+   overrides it, and the final preset merges everything — so
+   `npa(preset="minimal", model="myapp.model:create")` yields
+   minimal baseline + your model override.
+
+### 26.5 Three Registration Timings and Hot Reload
+
+| Timing | Way | Takes effect | Typical scenario |
+|---|---|---|---|
+| Startup assembly | `npa()` slot params (declarative); or `reg.register_*` before `npa()` (programmatic) | at startup | application assembly, library integration |
+| Runtime | `npa.remount(slot=...)`; or direct `reg.register_*` while running | component slots: next run(); assembly slots: AgentRuntime hot rebuild | switching models / tool sets / security levels |
+| Code hot reload | edit the module file → `npa.remount(model="myapp.model:create")` | immediately (module cache invalidated) | dev iteration, live bug fixes |
+
+Programmatic registration and the `npa()` ordering convention:
+
+```python
+reg = Registry()
+reg.register_tool("weather", WeatherTool())   # register first
+reg.register_preset(Preset(name="mine", tools=["weather"], ...))
+npa(preset="mine")                              # then start, reference by name
+```
+
+Note: `npa()` creates its own fresh `Registry()` internally and installs the
+built-ins, but it does **not** wipe registrations you made on the same `reg`
+before `npa()` — provided you actually use that `reg` (as in the programmatic
+assembly above, or by passing `reg` to a custom `agent_runtime` factory).
+The simplest approach: use the `reg` produced by `build_registry(layer)` for
+programmatic assembly, and `npa()` slot parameters for declarative assembly.
+
+Module-cache invalidation on hot reload (section 3.7): `remount` first runs
+`_invalidate_address_module` on string addresses — it deletes the .pyc at
+`module.__cached__` and pops the `sys.modules` entry, so the next resolution
+re-imports from disk. Hence "edit `myapp/weather_tool.py` →
+`npa.remount(tools={"weather": "myapp.weather_tool:create"})`" hot-updates the
+code; **instance / registered-name forms have no address to invalidate — use
+the address form after editing code**.
+
+Re-entrancy safety: `apply_slot_overrides` may run repeatedly against a
+running registry (every `npa.remount` calls it); before re-applying, it
+unsubscribes the architecture-level subscriptions it mounted last time (hook
+extensions / security kits / plugins), so hot mounts never duplicate
+subscriptions — custom-slot appliers must follow the same convention (record
+objects to unsubscribe in `ctx["meta"]`, section 25.10.3).
+
+### 26.6 Slot Registration vs Component Registration: Two Kinds of "Register"
+
+The framework has two "register" APIs that are easy to confuse:
+
+| Dimension | `register_slot` (slot-table hot plug) | `register_component` (generic component) |
+|---|---|---|
+| What is registered | a **mount point**: a new `npa()` keyword (slot name) | an **implementation**: a named implementation under some kind |
+| Entry point | `norpagent.arch.slots.register_slot` | `reg.register_component(kind, name, factory)` |
+| Scope of effect | the whole pipeline: `npa()` param validation, ArchLayer assembly, `npa.remount` hot replacement, `layer.describe()` manifest | preset `components` declaration + `ctx.component(kind)` lookup |
+| Assembly | the `SlotSpec.applier(reg, layer, value, params, ctx)` callback | the framework `build_component`s directly from `preset.components` |
+| Protection | the 18 built-in slot names can neither be registered / overridden / unregistered | none (dict-override semantics) |
+
+One sentence: **first a mount point (slot), then an implementation to plug in
+(a registry entry)**. In most cases you only need to register implementations
+(`register_tool` / `register_component`); you need `register_slot` only when
+you want a brand-new `npa()` keyword (full development flow: sections 3.8
+and 25.10).
+
+`register_slot` validation rules (violations raise `SlotError`):
+
+- the slot name must be a valid Python identifier (it becomes an `npa()`
+  keyword), not a Python keyword, and not `prompt` / `config` (launch special
+  keys);
+- the 18 built-in slot names are protected (`is_builtin_slot`);
+- `string_semantics` must be one of `address` / `name` / `name_or_address` /
+  `literal`; `applier` must be callable or None;
+- re-registering a name requires `replace=True` (custom slots only, hot-
+  replacing the spec; already-assembled implementations keep working until
+  the next `remount` re-resolves with the new spec).
+
+`register_slot` takes effect immediately: registering before `npa()` makes the
+new slot recognized (launch splits parameters by the live slot table);
+registering at runtime works too — a connected ArchLayer fills in late slots
+idempotently (`connect`), and `remount` accepts the new slot right away.
+
+### 26.7 Registration Validation and Error Handling
+
+The three exception types of the registration / assembly phase mean different
+things:
+
+| Exception | Raised when | What to do |
+|---|---|---|
+| `ComponentError` | resolving an unregistered name; `register_preset` with a non-Preset; custom-slot applier failure (wrapped) | check whether the name is registered and spelled correctly; cross-check with `reg.list_*()` |
+| `SlotError` | illegal slot-table operations: registering a built-in slot name / re-registering without replace / unregistering a missing slot / illegal slot name | fix the spec per the message; change built-in slot values with `npa.remount`, never by editing specs |
+| `AddressError` (inherits ImportError) | address resolution failure: module missing / attribute missing / empty address | check the module path and attribute name; import the module yourself to test; **do not silently fall back** (red line, 25.2.6) |
+
+The completeness of a preset's references can be validated in advance:
+
+```python
+missing, missing_tools = reg.validate_preset(my_preset)
+# the preset is usable only when missing == [] and missing_tools == []
+# missing example: ["model=openai_compat", "component=vector_store:pg"]
+```
+
+Runtime diagnosis, three moves:
+
+```python
+reg.list_tools()                    # what is actually in the table (move 1)
+reg.tool_schemas(["weather"])       # is the tool's schema usable (move 2)
+eng.layer.describe()                # assembly manifest: where each slot came from (move 3)
+```
+
+### 26.8 Registration Best Practices and a Checklist
+
+Best practices:
+
+1. **Naming**: lowercase with underscores; do not collide with built-ins
+   (`sqlite` / `pooled` / `persistent` / `openai_compat` ...); prefix plugin
+   tools with the plugin name to avoid overrides (`weather_current` beats
+   `get_time`).
+2. **Factory vs instance**: pass **factories** for sessions / sandboxes /
+   schedulers (new instance each time); pass **instances** for models / tools /
+   UIs (globally shared). Wrap a tool in a factory only when it carries
+   per-run state; otherwise share one instance (mind thread safety).
+3. **Timing**: declarative (`npa()` slots) suits application assembly;
+   programmatic (`reg.register_*`) suits library integration and dynamic
+   conditional assembly; hot reload (`npa.remount`) suits dev iteration and
+   live adjustments — all three can be mixed; everything flows into the same
+   Registry.
+4. **Prefer the address form**: a module address (`pkg.mod[:attr]`) buys you
+   factory injection, `;key=value` clauses and code hot reload in one shot.
+5. **The hot-reload red line**: dict key-value values must be valid modules —
+   a registered name / a resolvable address / an instance; an address-like
+   string that fails to resolve raises `AddressError`, never a silent fallback
+   (25.2.6 / 25.10.5).
+6. **Assembly observability**: before delivery, run `layer.describe()` and
+   confirm your implementation appears in the manifest with the right source
+   (address / direct value / default logic).
+
+Registration checklist (self-check every item before delivering a new
+component):
+
+| # | Check item | Reference |
+|---|---|---|
+| 1 | the component is registered in the right namespace (tool→tools, session→sessions, component→components) | 26.2 |
+| 2 | sessions / sandboxes / schedulers take factories; models / tools / UIs take instances | 26.2 |
+| 3 | the name does not collide with built-ins; lowercase with underscores | 26.8 |
+| 4 | at least one form verified: `reg.list_*()` shows it; `resolve_*` returns it | 26.7 |
+| 5 | the address form is importable: `import myapp.xxx` succeeds, the attribute exists | 26.7 |
+| 6 | the address form hot-reloads: edit code → remount → new code takes effect | 26.5 |
+| 7 | dict key-value values are valid modules (the red line) | 26.7 / 25.2.6 |
+| 8 | preset reference validation passes: `validate_preset` reports no gaps | 26.7 |
+| 9 | `layer.describe()` shows the right source | 26.4 / 3.5 |
+| 10 | the custom-slot applier is re-entrant (records objects to unsubscribe in `ctx["meta"]`) | 26.5 / 25.10.3 |
+| 11 | exception semantics are right: unregistered→`ComponentError`, bad address→`AddressError`, slot table→`SlotError` | 26.7 |
+| 12 | an unload path exists: plugins `unregister_plugin`, slots `unregister_slot` | 26.2 / 26.6 |
+
+---
+
 ## Appendix D Glossary
 
 | Term | Definition |
 |---|---|
 | Address Function | the framework's core abstraction: filling a slot value with an "address" (module path / factory / instance) mounts it; not filling uses the default |
-| Slot | a replaceable component position; `np(...)`'s keyword-argument names are slot names |
+| Slot | a replaceable component position; `npa(...)`'s keyword-argument names are slot names |
 | Hot-pluggable slot table | `register_slot()` registers custom slots at runtime; registration plugs into the full assembly / validation / hot-replacement pipeline |
 | Minimal kernel | only four things in the whole framework are non-replaceable: ArchLayer, the address resolver, Registry, EventBus |
 | String-address semantics | the four string interpretation modes `address` / `name` / `name_or_address` / `literal` |
@@ -4159,7 +5918,7 @@ low-level control when the loop itself is in trouble.
 | Snapshot | a serialized archive of system state (architecture slots + runtime params + WebUI settings) |
 | Last known-good snapshot | the good version auto-marked after a 30-second post-startup health window; the rescue CLI's one-step restore target |
 | Crash rescue (Rescue) | `norpagent-rescue`: the pure-standard-library CLI that can roll back snapshots even when the main program cannot start |
-| Safe Mode | `np(safemode="on")`: loads only the minimal kernel, skips all plugins |
+| Safe Mode | `npa(safemode="on")`: loads only the minimal kernel, skips all plugins |
 | Human Rescue | manual takeover when the model fails: `norpagent-rescue tools / tool-call / manual / serve` pass args by hand to every tool and read raw results |
 | SafetyKit | the security-policy suite installed by `norpagent.safe()` (approval / network / plugins / protection APIs) |
 | Plugin security pipeline | the full plugin-loading flow: signature → audit → import restrictions → registration |

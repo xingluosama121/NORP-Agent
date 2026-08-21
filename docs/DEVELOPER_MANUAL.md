@@ -3,7 +3,7 @@
 > **版本**：0.9.4 ｜ **许可**：Copyright (c) 2026 xingluosama121, MIT Licensed
 >
 > NORP Agent初版发布于2026年7月29日，在8月16日正式上线PyPI，定位为“智能体元框架”。
-> 2026-08 修订：第 24 章救援模式专章（底层循环控制 + 人类接管）｜ 内核修复：select 超时上限钳制（暴力压测发现，Windows 超远定时器崩溃）｜ 新增 35 项最小主异步循环暴力压测（test/stress_nasyncio_core.py）｜ 15.6 人类救援手动工具接管 API（v0.9.3，模型失效时手操全部工具：tools / tool-call / manual / serve）｜ 3.9 任务级槽位注入（submit(slot_overrides=...)）｜ 3.7 装配槽位热重建的在途任务竞态与排水建议 ｜ 4.6.4 守护工作池队列语义与卡死兜底矩阵 ｜ 23.1 EventBus 基准口径与锁竞争边界
+> 2026-08 修订：第 24 章救援模式专章（底层循环控制 + 人类接管）｜ 内核修复：select 超时上限钳制（暴力压测发现，Windows 超远定时器崩溃）｜ 新增 35 项最小主异步循环暴力压测（test/stress_nasyncio_core.py）｜ 15.6 人类救援手动工具接管 API（v0.9.3，模型失效时手操全部工具：tools / tool-call / manual / serve）｜ 3.9 任务级槽位注入（submit(slot_overrides=...)）｜ 3.7 装配槽位热重建的在途任务竞态与排水建议 ｜ 4.6.4 守护工作池队列语义与卡死兜底矩阵 ｜ 23.1 EventBus 基准口径与锁竞争边界 ｜ 第 25 章开发者实战专章（逐模块开发 / 槽位开发 / 插件与工具开发详解，含热重载红线：键值对的值必须是有效模块）｜ 第 26 章注册流程详解（注册表 9 大命名空间 / 四种形态与字符串语义 / npa() 装配全链路 / 三种注册时机与热重载 / 槽位注册与组件注册的区别 / 校验与错误处理 / 检查清单）
 
 ---
 
@@ -14,7 +14,7 @@
 - [第 3 章　架构层与地址函数](#第-3-章架构层与地址函数)
 - [第 4 章　事件循环系统：norpagent.nasyncio()](#第-4-章事件循环系统norpagentnasyncio)
 - [第 5 章　前端体系](#第-5-章前端体系)
-- [第 6 章　np() 启动与生命周期](#第-6-章np-启动与生命周期)
+- [第 6 章　npa() 启动与生命周期](#第-6-章npa-启动与生命周期)
 - [第 7 章　模型与工具](#第-7-章模型与工具)
 - [第 8 章　会话、沙箱、调度器、上下文与项目](#第-8-章会话沙箱调度器上下文与项目)
 - [第 9 章　9 层 29 钩子](#第-9-章9-层-29-钩子)
@@ -36,6 +36,8 @@
 - [第 22 章　Web UI 与前端深度解析](#第-22-章web-ui-与前端深度解析)
 - [第 23 章　性能设计与基准测试](#第-23-章性能设计与基准测试)
 - [第 24 章　救援模式：底层循环控制与人类接管](#第-24-章救援模式底层循环控制与人类接管)
+- [第 25 章　开发者实战：模块、槽位、插件与工具开发](#第-25-章开发者实战模块槽位插件与工具开发)
+- [第 26 章　注册流程详解](#第-26-章注册流程详解)
 - [附录 D　术语表](#附录-d术语表)
 - [附录 E　29 钩子事件负载速查表](#附录-e29-钩子事件负载速查表)
 
@@ -63,12 +65,12 @@ pip install norpagent[all]          # 全部
 ### 1.2 第一个程序
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np()                    # 按默认配置启动（standard 预设 + Web 前端）
+npa()                    # 按默认配置启动（standard 预设 + Web 前端）
 running = True
 while running:
-    if np.stop() == True:   # 生命周期函数：应用结束即退出
+    if npa.stop() == True:   # 生命周期函数：应用结束即退出
         running = False
 ```
 
@@ -81,35 +83,35 @@ while running:
 
 浏览器访问该地址打开聊天界面。启动流程见第 6 章。两个要点：
 
-1. **`np()` 是模块级调用**——`norpagent` 模块本身可调用，等价于 `norpagent.launch()`；
-2. **`np.stop()` 是生命周期函数**——返回 `True` 表示 Agent 应用已结束，主循环应退出。
+1. **`npa()` 是模块级调用**——`norpagent` 模块本身可调用，等价于 `norpagent.launch()`；
+2. **`npa.stop()` 是生命周期函数**——返回 `True` 表示 Agent 应用已结束，主循环应退出。
 
 ### 1.3 单次任务模式
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(prompt="用一句话解释什么是地址函数")
+npa(prompt="用一句话解释什么是地址函数")
 running = True
 while running:
-    if np.stop() == True:
+    if npa.stop() == True:
         running = False
 
-engine = np.current()
+engine = npa.current()
 print(engine.last_result.final_content)
 ```
 
-传入 `prompt` 后：Agent 执行完这一条任务即自动停止（`np.stop()` 变为 `True`），
-任务结果保存在 `np.current().last_result`。
+传入 `prompt` 后：Agent 执行完这一条任务即自动停止（`npa.stop()` 变为 `True`），
+任务结果保存在 `npa.current().last_result`。
 
 ### 1.4 替换前端示例
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(prompt="hi", frontend="norpagent.frontends.headless:HeadlessFrontend")
+npa(prompt="hi", frontend="norpagent.frontends.headless:HeadlessFrontend")
 while True:
-    if np.stop():
+    if npa.stop():
         break
 ```
 
@@ -120,19 +122,19 @@ HeadlessFrontend 不读取键盘输入、不渲染界面，通过程序 API 驱�
 
 | 用法 | 写法 |
 |---|---|
-| 按默认配置启动 | `np()` |
-| 判断应用是否结束 | `np.stop()` |
-| 单次任务 | `np(prompt="...")` |
-| 指定预设模式 | `np(preset="standard")` |
-| 指定模型 | `np(model="openai_compat")` |
-| 指定事件循环 | `np(async_loop="myapp.loop:create")` |
-| 指定前端 | `np(frontend="myapp.ui:create")` |
-| 指定会话存储 | `np(session="sqlite")` |
-| 指定安全级别 | `np(security="high")` |
-| Web 端口 / 语言 | `np(port=9000, language="zh_CN")` |
-| 自定义主页面 | `np(html="/path/to/my.html")` |
-| 自定义模块流程页 | `np(flow_html="/path/to/flow.html")` |
-| 前端直挂 HTML 路径 | `np(frontend="/path/to/my.html")` |
+| 按默认配置启动 | `npa()` |
+| 判断应用是否结束 | `npa.stop()` |
+| 单次任务 | `npa(prompt="...")` |
+| 指定预设模式 | `npa(preset="standard")` |
+| 指定模型 | `npa(model="openai_compat")` |
+| 指定事件循环 | `npa(async_loop="myapp.loop:create")` |
+| 指定前端 | `npa(frontend="myapp.ui:create")` |
+| 指定会话存储 | `npa(session="sqlite")` |
+| 指定安全级别 | `npa(security="high")` |
+| Web 端口 / 语言 | `npa(port=9000, language="zh_CN")` |
+| 自定义主页面 | `npa(html="/path/to/my.html")` |
+| 自定义模块流程页 | `npa(flow_html="/path/to/flow.html")` |
+| 前端直挂 HTML 路径 | `npa(frontend="/path/to/my.html")` |
 
 ---
 
@@ -149,7 +151,7 @@ Agent 循环）时，为槽位填入新地址即可，无需修改框架核心�
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  你的应用                                                    │
-│  np() / np.stop() / np.nasyncio() / np.current().submit()   │
+│  npa() / npa.stop() / npa.nasyncio() / npa.current().submit()   │
 └───────────────────────────┬─────────────────────────────────┘
                             │ 模块入口（norpagent/__init__.py 可调用）
 ┌───────────────────────────▼─────────────────────────────────┐
@@ -195,7 +197,7 @@ Agent 循环）时，为槽位填入新地址即可，无需修改框架核心�
 
 ### 2.4 一次任务的数据流
 
-用户输入一行「帮我读取 readme.md 并总结」，一次 `np()` 启动的引擎内部发生：
+用户输入一行「帮我读取 readme.md 并总结」，一次 `npa()` 启动的引擎内部发生：
 
 ```
 前端线程 input() 拿到文本
@@ -221,7 +223,7 @@ Agent 循环）时，为槽位填入新地址即可，无需修改框架核心�
 
 | 文件 | 职责 |
 |---|---|
-| `norpagent/__init__.py` | 模块即入口：`np()` / `np.stop()` / `np.nasyncio()` |
+| `norpagent/__init__.py` | 模块即入口：`npa()` / `npa.stop()` / `npa.nasyncio()` |
 | `norpagent/arch/slots.py` | 18 个内置架构槽位的规格定义表 + 槽位表热插拔注册中心（register_slot / unregister_slot / replace=True 规格热替换） |
 | `norpagent/arch/address.py` | 地址函数解析器（字符串 → 模块/对象） |
 | `norpagent/arch/layer.py` | ArchLayer：槽位连接与工厂调用 |
@@ -344,12 +346,12 @@ reg.list_components()                                   # 列出全部种类
 3. **注册**：`reg.register_session("redis", factory)` 或由
    runtime.mount / 自己的装配代码登记；
 4. **声明使用**：预设里 `session="redis"`，或启动时
-   `np(session="redis")` / 地址字符串
-   `np(session="myapp.redis:create")`；
+   `npa(session="redis")` / 地址字符串
+   `npa(session="myapp.redis:create")`；
 5. **接钩子**（可选）：在实现内经 registry 发布 / 订阅事件。
 
 等价的手工装配路径：`Registry() + register_* +
-AgentRuntime(...)`（17.1 节），与 np() 装配完全同构——np()
+AgentRuntime(...)`（17.1 节），与 npa() 装配完全同构——npa()
 只是把这五步自动化。
 
 ---
@@ -387,7 +389,7 @@ print(get_slot("async_loop").format_help())
 #   字符串语义: address
 #   工厂参数 layer: 所在架构层
 #   工厂参数 config: 该槽位的附加配置 dict
-#   示例: np(async_loop='norpagent.loops.nasyncio:NasyncioLoopRuntime')
+#   示例: npa(async_loop='norpagent.loops.nasyncio:NasyncioLoopRuntime')
 ```
 
 ### 3.2 地址函数：不填 = 默认，填了 = 接入
@@ -396,10 +398,10 @@ print(get_slot("async_loop").format_help())
 
 | 形态 | 写法 | 语义 |
 |---|---|---|
-| 不填（None） | `np()` | 使用库内置默认逻辑 |
-| 字符串地址 | `np(async_loop="pkg.mod:attr")` | 按地址加载文件，把实现接上去 |
-| 可调用对象 | `np(async_loop=MyLoop)` | 工厂/类直接接入 |
-| 实例/值 | `np(async_loop=loop_instance)` | 现成对象直接接入 |
+| 不填（None） | `npa()` | 使用库内置默认逻辑 |
+| 字符串地址 | `npa(async_loop="pkg.mod:attr")` | 按地址加载文件，把实现接上去 |
+| 可调用对象 | `npa(async_loop=MyLoop)` | 工厂/类直接接入 |
+| 实例/值 | `npa(async_loop=loop_instance)` | 现成对象直接接入 |
 
 字符串地址的解析规则（`norpagent.arch.address.resolve_address`）：
 
@@ -416,7 +418,7 @@ print(get_slot("async_loop").format_help())
 
 ```python
 # 用自定义 HTML 文件替换 / 路由默认页面（不物理覆盖库文件）
-np(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
+npa(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
 ```
 
 ### 3.3 字符串语义
@@ -431,23 +433,23 @@ np(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
 | `name_or_address` | 先按名、再按地址 | model, session, sandbox, scheduler, ui, preset |
 | `literal` | 字符串 = 字面值，地址优先 | security(级别), storage(路径), hooks, plugins, logger, error_handler |
 
-其中：`np(model="mock")` 中的 `"mock"` 是注册表里的模型名；
-`np(model="myapp.model:create")` 中的字符串是地址。
-`np(session="sqlite")` 引用内置 SQLite 会话组件；
-`np(session="myapp.sessions:create")` 按地址加载自定义会话实现。
+其中：`npa(model="mock")` 中的 `"mock"` 是注册表里的模型名；
+`npa(model="myapp.model:create")` 中的字符串是地址。
+`npa(session="sqlite")` 引用内置 SQLite 会话组件；
+`npa(session="myapp.sessions:create")` 按地址加载自定义会话实现。
 
 **v0.9.1：全部槽位支持按地址加载 + 键值对的值支持纯地址解析**
 
 1. `name` / `name_or_address` 槽位：字符串先查注册表名，查不到再按
    模块地址（`pkg.mod[:attr]`）加载——ui / preset 已从纯 `name`
-   升级为 `name_or_address`：`np(ui="myapp.render:create")`、
-   `np(preset="myapp.presets:build")` 直接按地址接上实现；
+   升级为 `name_or_address`：`npa(ui="myapp.render:create")`、
+   `npa(preset="myapp.presets:build")` 直接按地址接上实现；
 2. `literal` 槽位「地址优先」：字符串**形如纯地址**（含 `.` 或 `:`
    的点分标识符，结构判定见 `norpagent.arch.address.is_address_like`）
    即按地址加载（解析失败抛 `AddressError`，不静默回落）；其余保持
-   字面值——`np(security="high")` 仍是级别、`np(storage="./data")`
-   仍是路径，`np(security="myapp.sec:build_kit")` /
-   `np(storage="myapp.store:create;root=./x")` 按地址加载；
+   字面值——`npa(security="high")` 仍是级别、`npa(storage="./data")`
+   仍是路径，`npa(security="myapp.sec:build_kit")` /
+   `npa(storage="myapp.store:create;root=./x")` 按地址加载；
 3. **键值对的值支持纯地址解析**：任何槽位的 dict 形态值统一处理
    （tools 映射 / hooks 映射 / 自定义槽位 dict 值，嵌套 dict 递归）：
    值若是纯地址字符串就按地址解析为对象（解析失败抛 `AddressError`）
@@ -479,25 +481,25 @@ class MyLoop:
     def __init__(self):
         ...
 
-np(async_loop=MyLoop)
+npa(async_loop=MyLoop)
 
 # 2. 工厂函数：声明 config → 自动注入
 def create(config=None, **kw):
     return MyLoop(timeout=float((config or {}).get("timeout", 0)))
 
-np(async_loop=create)
+npa(async_loop=create)
 
 # 3. 字符串地址 + 附加配置子句
-np(async_loop="myapp.loop:create;timeout=5")
+npa(async_loop="myapp.loop:create;timeout=5")
 ```
 
 ### 3.5 ArchLayer：装配清单可观测
 
-每一次 `np()` 内部都会构建一个 ArchLayer 并 `connect()`。
+每一次 `npa()` 内部都会构建一个 ArchLayer 并 `connect()`。
 装配结果可观测：
 
 ```python
-eng = np.current()
+eng = npa.current()
 print(eng.layer.describe())
 ```
 
@@ -518,11 +520,11 @@ print(eng.layer.describe())
 ### 3.6 示例：替换多个槽位
 
 ```python
-import norpagent as np
+import norpagent as npa
 
 # 模型为 openai_compat，会话为 sqlite，沙箱为 pooled，前端为 Web（端口 9000），
 # 循环为自定义实现，安全级别 high。全部通过槽位参数指定。
-np(
+npa(
     preset="standard",
     model="openai_compat",              # 名称引用
     session="sqlite",                   # 名称引用
@@ -533,30 +535,30 @@ np(
 )
 
 while True:
-    if np.stop():
+    if npa.stop():
         break
 ```
 
 ### 3.7 运行中热挂载：任何槽位均可替换
 
-`np()` 启动后**引擎保持运行**，随时替换任意槽位实现，无需重启：
+`npa()` 启动后**引擎保持运行**，随时替换任意槽位实现，无需重启：
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np()                                        # 启动（默认 Web 前端）
+npa()                                        # 启动（默认 Web 前端）
 # ... 应用运行中 ...
 
-np.remount(model="openai_compat")           # 换模型：下一次 run 生效
-np.remount(tools=["echo", "get_time"])      # 换工具集：下一次 run 生效
-np.remount(session="sqlite")                # 换会话存储：AgentRuntime 热重建
-np.remount(security="high")                 # 换安全级别：旧防护钩子先退订
-np.remount(frontend="norpagent.frontends.console:ConsoleFrontend")
-np.remount(async_loop="myapp.loop:create")  # 换事件循环：停旧启新
-np.remount(model="myapp.model:create")      # 运行中替换模块文件（热重载）
+npa.remount(model="openai_compat")           # 换模型：下一次 run 生效
+npa.remount(tools=["echo", "get_time"])      # 换工具集：下一次 run 生效
+npa.remount(session="sqlite")                # 换会话存储：AgentRuntime 热重建
+npa.remount(security="high")                 # 换安全级别：旧防护钩子先退订
+npa.remount(frontend="norpagent.frontends.console:ConsoleFrontend")
+npa.remount(async_loop="myapp.loop:create")  # 换事件循环：停旧启新
+npa.remount(model="myapp.model:create")      # 运行中替换模块文件（热重载）
 ```
 
-底层链路：`np.remount()` → `engine.remount()` → `ArchLayer.remount()`。
+底层链路：`npa.remount()` → `engine.remount()` → `ArchLayer.remount()`。
 字符串地址在重新解析前会**失效模块缓存与 .pyc 字节码缓存**，
 因此「修改模块文件 → remount」即可在运行中换上改动后的代码，
 无需重启进程。
@@ -599,14 +601,14 @@ drain**，属业务侧职责。
 `/flow` 模块流程页面——不用重启进程，刷新浏览器即见新页面：
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(html="front.html")                       # 启动并挂载自定义主页面
+npa(html="front.html")                       # 启动并挂载自定义主页面
 # ... 修改 front.html 或换别的页面文件 ...
-np.remount(frontend="norpagent.frontends.web:WebFrontend;html=front.html")
+npa.remount(frontend="norpagent.frontends.web:WebFrontend;html=front.html")
 # 端口不变，浏览器刷新（或重开 http://127.0.0.1:8787/）即为新页面
 
-np.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=flow.html")
+npa.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=flow.html")
 # 换 /flow 模块流程编排页面（norp-flow.html 的官方挂载途径）
 ```
 
@@ -616,34 +618,34 @@ np.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=flow.html")
 不同的键（html / flow_html 以 `_html` / `_flow_html` 属性判定）。例如：
 
 ```python
-np.remount(frontend="norpagent.frontends.web:WebFrontend;port=9000")  # 换端口（重启 HTTP 监听）
-np.remount(frontend="norpagent.frontends.web:WebFrontend;html=")      # 重置主页面为库内置
-np.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=") # 重置 /flow 为库内置
+npa.remount(frontend="norpagent.frontends.web:WebFrontend;port=9000")  # 换端口（重启 HTTP 监听）
+npa.remount(frontend="norpagent.frontends.web:WebFrontend;html=")      # 重置主页面为库内置
+npa.remount(frontend="norpagent.frontends.web:WebFrontend;flow_html=") # 重置 /flow 为库内置
 from norpagent.frontends.web import WebFrontend
-np.remount(frontend=WebFrontend(html="front.html"))                   # 实例形式
-np.remount(frontend=WebFrontend(flow_html="flow.html"))               # 实例形式
-np.remount(frontend="front.html")     # HTML 路径直挂：等价于 WebFrontend;html=front.html
+npa.remount(frontend=WebFrontend(html="front.html"))                   # 实例形式
+npa.remount(frontend=WebFrontend(flow_html="flow.html"))               # 实例形式
+npa.remount(frontend="front.html")     # HTML 路径直挂：等价于 WebFrontend;html=front.html
 ```
 
 **remount 页面热替换键（v0.9，更简单的换页入口）**：`html` /
 `flow_html` 本身不是槽位，而是 frontend 槽位的挂载参数——
-`np.remount()` 直接接收这两个键，**不经过「停旧前端 / 启新前端」**，
+`npa.remount()` 直接接收这两个键，**不经过「停旧前端 / 启新前端」**，
 经 `mount_page` 立即换页（HTTP 服务不重启、端口不变，刷新浏览器
 即见新页面）：
 
 ```python
-np.remount(flow_html="flow-v2.html")       # /flow 立即换页（HTTP 不重启）
-np.remount(html="front-v2.html")           # / 主页面立即换页
-np.remount(flow_html="<html>...</html>")   # HTML 内容直传（"<" 开头视为内容）
-np.remount(flow_html=None)                 # 卸载挂载，回落库内置 norp-flow.html
-np.remount(flow_html="", html="")          # "" 与 None 同语义（卸载）
-np.remount(flow_html="flow-v2.html",
+npa.remount(flow_html="flow-v2.html")       # /flow 立即换页（HTTP 不重启）
+npa.remount(html="front-v2.html")           # / 主页面立即换页
+npa.remount(flow_html="<html>...</html>")   # HTML 内容直传（"<" 开头视为内容）
+npa.remount(flow_html=None)                 # 卸载挂载，回落库内置 norp-flow.html
+npa.remount(flow_html="", html="")          # "" 与 None 同语义（卸载）
+npa.remount(flow_html="flow-v2.html",
            frontend="norpagent.frontends.web:WebFrontend")  # 可组合：先落参数再换前端
 ```
 
 语义细节：
 
-1. 值先写入 `engine.params`（与 `np(html=...)` 启动透传同一条数据
+1. 值先写入 `engine.params`（与 `npa(html=...)` 启动透传同一条数据
    通路），后续 frontend 热挂载 / attach 沿用新值；
 2. 当前前端是 Web 前端时经 `mount_page` 立即换页；非 Web 前端
    （console / headless）只更新参数、无副作用；
@@ -656,9 +658,9 @@ np.remount(flow_html="flow-v2.html",
 
 **frontend 槽位两种挂载方式（v0.9，等价共存）**：
 
-1. 地址式：`np(frontend="norpagent.frontends.web:WebFrontend;html=...")`
+1. 地址式：`npa(frontend="norpagent.frontends.web:WebFrontend;html=...")`
    —— 模块地址 + 分句参数；
-2. HTML 路径直挂：`np(frontend="front.html")` —— 槽位值本身是
+2. HTML 路径直挂：`npa(frontend="front.html")` —— 槽位值本身是
    `.html/.htm` 文件路径（不含 `;` 子句）时，架构层不再按模块地址
    解析，装配器自动转换为 `WebFrontend(html=<该路径>)`。文件不存在
    抛 `ValueError` 快速失败（不静默回落默认前端）。
@@ -670,9 +672,9 @@ np.remount(flow_html="flow-v2.html",
 
 ```python
 # 方式一：remount 页面热替换键（推荐，v0.9）
-np.remount(flow_html="flow.html")           # /flow 立即换页
-np.remount(html="front.html")               # / 主页面立即换页
-np.remount(flow_html=None)                  # 卸载挂载，回落库内置
+npa.remount(flow_html="flow.html")           # /flow 立即换页
+npa.remount(html="front.html")               # / 主页面立即换页
+npa.remount(flow_html=None)                  # 卸载挂载，回落库内置
 
 # 方式二：frontend 实例 API
 eng.frontend.mount_page("flow", "flow.html")   # /flow 立即换页
@@ -687,7 +689,7 @@ mtime/size 签名校验——直接覆盖
 后刷新浏览器即为新页面（无需 remount、无需重启）；命中缓存时
 仅一次 stat 校验，无 open+read 磁盘 I/O。
 
-注意事项：`np.remount()` 是**进程内 API**，需在启动了引擎的同一
+注意事项：`npa.remount()` 是**进程内 API**，需在启动了引擎的同一
 Python 进程里调用（跨进程不生效）。cmd 中运行时，把 remount 放在
 生命周期循环里、或起一个线程读 stdin 即可实现「敲命令换页面」。
 
@@ -703,9 +705,9 @@ Python 进程里调用（跨进程不生效）。cmd 中运行时，把 remount 
 
 ### 3.8 槽位表热插拔：注册自定义槽位
 
-`np.remount()` 换的是**槽位的实现**；槽位表本身（`SLOT_SPECS`）也
+`npa.remount()` 换的是**槽位的实现**；槽位表本身（`SLOT_SPECS`）也
 可热插拔——第三方库运行时注册**全新的自定义槽位**，注册即接入
-完整管线（`np()` 参数校验、ArchLayer 装配、`np.remount()` 热替换、
+完整管线（`npa()` 参数校验、ArchLayer 装配、`npa.remount()` 热替换、
 `layer.describe()` 清单），无需修改框架源码、无需重启进程：
 
 ```python
@@ -713,7 +715,7 @@ from norpagent.arch import SlotSpec, register_slot, unregister_slot
 
 # 自定义槽位 = 名字 + 字符串语义 + 应用逻辑（applier）
 register_slot(SlotSpec(
-    name="audit_tag",                # 槽位名 = np() 的关键字参数名
+    name="audit_tag",                # 槽位名 = npa() 的关键字参数名
     description="审计标签",
     protocol="literal 字符串",
     string_semantics="literal",      # address / name / name_or_address / literal
@@ -722,10 +724,10 @@ register_slot(SlotSpec(
 ```
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(audit_tag="release-1")            # 装配期即应用
-np.remount(audit_tag="release-2")    # 运行中热替换（applier 重新执行）
+npa(audit_tag="release-1")            # 装配期即应用
+npa.remount(audit_tag="release-2")    # 运行中热替换（applier 重新执行）
 ```
 
 `applier(reg, layer, value, params, ctx)` 的契约：
@@ -737,7 +739,7 @@ np.remount(audit_tag="release-2")    # 运行中热替换（applier 重新执行
   {kind: name}）、`extras`（引擎附加对象，`engine.extras[槽位名]`
   消费）、`overrides`（预设字段覆盖）、`meta`（注册表架构元数据，
   记录挂上去的可退订对象）；
-- **同一注册表可能重复调用**（装配 + 每次 `np.remount`），applier
+- **同一注册表可能重复调用**（装配 + 每次 `npa.remount`），applier
   必须重入安全：重复执行不叠加副作用——订阅事件总线的对象先按
   `ctx["meta"]` 的记录退订再重挂（参考内置 hooks / security /
   plugins 槽位的做法）；
@@ -769,38 +771,38 @@ register_slot(SlotSpec(
     remount_rebuild_agent=True,     # 热替换后热重建，组件立即生效
 ))
 
-np(vector_store=MyVectorStore())    # 装配：engine.agent.components["vector_store"]
-np.remount(vector_store=Other())    # 热替换：AgentRuntime 热重建
+npa(vector_store=MyVectorStore())    # 装配：engine.agent.components["vector_store"]
+npa.remount(vector_store=Other())    # 热替换：AgentRuntime 热重建
 ```
 
 保护与校验规则：
 
 | 规则 | 说明 |
 |---|---|
-| 内置 18 槽位受保护 | 不可注册 / 覆盖规格 / 注销（框架结构契约：引擎、前端、文档引用）。它们的**值**随时可 `np.remount` 热替换 |
-| 槽位名合法性 | 合法 Python 标识符（`np()` 关键字参数），不能是关键字，不能是 `prompt` / `config`（launch 特殊键） |
+| 内置 18 槽位受保护 | 不可注册 / 覆盖规格 / 注销（框架结构契约：引擎、前端、文档引用）。它们的**值**随时可 `npa.remount` 热替换 |
+| 槽位名合法性 | 合法 Python 标识符（`npa()` 关键字参数），不能是关键字，不能是 `prompt` / `config`（launch 特殊键） |
 | 重复名 | 抛 `SlotError`；`register_slot(spec, replace=True)` 热替换同名自定义槽位的规格（默认地址 / 语义 / applier / 重建标志） |
 | 非法规格 | 非 callable applier、非法 `string_semantics` 抛 `SlotError`；失败的 replace 不破坏旧规格 |
-| 注销 | `unregister_slot(name)` 注销自定义槽位并返回规格；此后 `np.remount(该槽位)` 报未知槽位，`np(该键=...)` 回落为任务参数；已装配实现保持原状 |
-| 晚注册 | 引擎启动后注册的槽位：`layer.connect()` 幂等补齐（只连接缺失槽位），或直接 `np.remount(槽位=值)` 走全管线 |
+| 注销 | `unregister_slot(name)` 注销自定义槽位并返回规格；此后 `npa.remount(该槽位)` 报未知槽位，`npa(该键=...)` 回落为任务参数；已装配实现保持原状 |
+| 晚注册 | 引擎启动后注册的槽位：`layer.connect()` 幂等补齐（只连接缺失槽位），或直接 `npa.remount(槽位=值)` 走全管线 |
 
-顶层 API：`np.register_slot` / `np.unregister_slot` /
-`np.SlotSpec` / `np.SLOT_SPECS` / `np.is_builtin_slot` /
-`np.snapshot_slots`；槽位表操作线程安全（RLock 保护，装配 / 热挂载
+顶层 API：`npa.register_slot` / `npa.unregister_slot` /
+`npa.SlotSpec` / `npa.SLOT_SPECS` / `npa.is_builtin_slot` /
+`npa.snapshot_slots`；槽位表操作线程安全（RLock 保护，装配 / 热挂载
 按快照迭代）。
 
 ---
 
 ### 3.9 任务级槽位注入：submit(slot_overrides=...)
 
-`np()` 启动装配与 `np.remount()` 热挂载都是**全局**维度：换一次
+`npa()` 启动装配与 `npa.remount()` 热挂载都是**全局**维度：换一次
 影响所有后续任务。任务级槽位注入是第三个维度——**单次任务**执行
 期间临时覆盖任意槽位实现，不影响全局配置、不阻塞其他在途任务：
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-engine = np(preset="standard")
+engine = npa(preset="standard")
 
 # 单任务：临时换模型 + 换工具
 r = engine.submit(
@@ -817,7 +819,7 @@ r = engine.submit(
 #### 3.9.1 语法与键全集
 
 `engine.submit(text, session_id=None, task_params=None, slot_overrides=None)`
-（顶层 `np.submit(...)` 同样支持）。`slot_overrides` 的键与 `np()` 的
+（顶层 `npa.submit(...)` 同样支持）。`slot_overrides` 的键与 `npa()` 的
 槽位参数完全一致（14 个可任务级覆盖的键）：
 
 | 键 | 任务级语义 | 生效时机 |
@@ -834,30 +836,30 @@ r = engine.submit(
 | `async_loop` | 本次任务在独立临时事件循环上执行（不与主循环争抢工作池） | 本次任务 |
 | `logger` / `storage` / `error_handler` | 注入本次任务的参数上下文（params），供组件工厂与钩子读取（见 3.9.5） | 本次 run |
 
-值形态与 `np()` 槽位完全一致：已注册名引用 / 模块地址（`pkg.mod[:attr]`，
+值形态与 `npa()` 槽位完全一致：已注册名引用 / 模块地址（`pkg.mod[:attr]`，
 含 `;key=value` 子句）/ 工厂 / 实例，解析失败抛 `AddressError`。
 
 **非槽位键自动回落为任务参数**：`slot_overrides` 里的键不在上述
 14 键内时（如 `max_steps` / `task_timeout` / `mock_script`），自动并入
-`task_params` 透传给 Agent 循环——与 `np()` 的「槽位键拆分、其余
+`task_params` 透传给 Agent 循环——与 `npa()` 的「槽位键拆分、其余
 透传参数」同一条数据通路，因此 `slot_overrides={"max_steps": 64}`
 这样的写法开箱即用。
 
 **不可任务级覆盖的键**：`frontend` / `ui` / `plugins` / `preset` 是
 进程级或引擎级结构（输入输出外壳、渲染器、插件加载器、组件组合
 基线），不属于单次任务的覆盖边界，传入会回落为任务参数（不会报错，
-但也不产生槽位覆盖效果——请改用 `np.remount`）。
+但也不产生槽位覆盖效果——请改用 `npa.remount`）。
 
 #### 3.9.2 优先级：任务级 > remount > 启动装配 > 预设
 
 | 层级 | 来源 | 优先级 |
 |---|---|---|
 | 1 | `submit(slot_overrides=...)` | 最高 |
-| 2 | `np.remount(slot=...)` | 次高 |
-| 3 | 启动时 `np(slot=...)` | 次低 |
+| 2 | `npa.remount(slot=...)` | 次高 |
+| 3 | 启动时 `npa(slot=...)` | 次低 |
 | 4 | 预设 Preset 声明 | 最低 |
 
-任务级覆盖在 **submit() 时刻拍快照**，后续的全局 `np.remount` 不会
+任务级覆盖在 **submit() 时刻拍快照**，后续的全局 `npa.remount` 不会
 影响在途任务（3.9.3）。这与「Drain + remount」形成互补：不想等
 排水就覆盖，不想覆盖就排水后再 remount。
 
@@ -966,28 +968,28 @@ session 覆盖互不影响，也互不影响全局配置。
 NorpAgent 将循环系统提供为独立架构函数：
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-loop = np.nasyncio()                       # 默认循环（自研 nasyncio 核心）
-loop = np.nasyncio("myapp.loop:create")    # 自定义循环
+loop = npa.nasyncio()                       # 默认循环（自研 nasyncio 核心）
+loop = npa.nasyncio("myapp.loop:create")    # 自定义循环
 ```
 
 它与槽位等价：
 
 ```python
-np(async_loop="myapp.loop:create")   # 等价于 np.nasyncio("myapp.loop:create")
+npa(async_loop="myapp.loop:create")   # 等价于 npa.nasyncio("myapp.loop:create")
 ```
 
-`np.nasyncio()` 的返回值是一个 **LoopRuntime**（协议见下）。
+`npa.nasyncio()` 的返回值是一个 **LoopRuntime**（协议见下）。
 默认实现运行的调度核心是库内置的**自研 nasyncio 事件循环**
 （`norpagent.nasyncio`，原 nasync_io，已打包进库）——**不依赖、
 不 import 标准 asyncio**（声明与原因见 4.7）。如需使用其他事件
 循环实现，实现 LoopRuntime 协议并为 `async_loop` 槽位填入地址
 即可，无需修改框架核心代码。
 
-> 顶层 `norpagent.nasyncio`（即 `np.nasyncio`）绑定的是自研核心
-> **模块**（可调用）：`np.nasyncio()` 返回 LoopRuntime 默认实现；
-> `np.nasyncio.EventLoop` / `Future` / `Task` 直接访问核心类型；
+> 顶层 `norpagent.nasyncio`（即 `npa.nasyncio`）绑定的是自研核心
+> **模块**（可调用）：`npa.nasyncio()` 返回 LoopRuntime 默认实现；
+> `npa.nasyncio.EventLoop` / `Future` / `Task` 直接访问核心类型；
 > `import norpagent.nasyncio` 得到同一个核心模块。架构函数本体在
 > `norpagent.loops.nasyncio`。
 
@@ -1021,13 +1023,13 @@ asyncio）：独立线程跑 `norpagent.nasyncio.EventLoop`（run_forever），
 | `max_workers` | 守护工作池线程数 | `max(4, cpu_count)` |
 | `poll_interval` | submit/run_async 完成轮询间隔（秒） | `0.05` |
 
-经 `np(config={"loop": {"max_workers": 8}})` 传入（或环境变量
+经 `npa(config={"loop": {"max_workers": 8}})` 传入（或环境变量
 `NORPAGENT_MAX_WORKERS` / `NORPAGENT_SUBMIT_POLL`；等价写法
-`np.nasyncio(max_workers=8)` 与 `np(async_loop="norpagent.loops.nasyncio:NasyncioLoopRuntime")`
+`npa.nasyncio(max_workers=8)` 与 `npa(async_loop="norpagent.loops.nasyncio:NasyncioLoopRuntime")`
 构造时同源）。
 
 ```python
-loop = np.nasyncio()
+loop = npa.nasyncio()
 loop.start()
 result = loop.submit(lambda: 1 + 1)   # → 2
 loop.stop()
@@ -1071,12 +1073,12 @@ def create(**kw):                    # 模块级工厂（地址 "myapp.simple_lo
 接入：
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(async_loop="myapp.simple_loop", prompt="hi",
+npa(async_loop="myapp.simple_loop", prompt="hi",
    frontend="norpagent.frontends.headless:HeadlessFrontend")
 while True:
-    if np.stop():
+    if npa.stop():
         break
 ```
 
@@ -1107,7 +1109,7 @@ concurrent.futures 保证在结果写入线程内同步触发）。注意
 
 #### 4.6.1 问题：主线程不在事件循环入口里，Ctrl+C 为什么可能失灵
 
-`np()` 启动后主线程只做生命周期轮询（`np.stop()`），真正的工作线程
+`npa()` 启动后主线程只做生命周期轮询（`npa.stop()`），真正的工作线程
 在后台执行任务，调用方（如控制台 REPL 的主线程）阻塞在
 `loop.submit()` 的等待上。两条信号链路上的坑：
 
@@ -1264,11 +1266,11 @@ nasync_io，v2.0.0），底层只依赖 Python 标准库的**非 asyncio**
 （见 4.3）。
 
 ```python
-import norpagent as np
+import norpagent as npa
 import norpagent.nasyncio as core  # 自研核心模块（可调用）
 
 print(core.__version__)          # 2.0.0
-loop_rt = np.nasyncio()          # LoopRuntime 默认实现（同 core()）
+loop_rt = npa.nasyncio()          # LoopRuntime 默认实现（同 core()）
 print(loop_rt.name)              # nasyncio
 print(core.EventLoop)            # 自研事件循环类
 ```
@@ -1303,7 +1305,7 @@ class Frontend(Protocol):
 
 | 前端 | 地址 | 说明 |
 |---|---|---|
-| Web（默认） | `norpagent.frontends.web:WebFrontend` | HTTP + SSE，无第三方依赖；页面 = front.html（多标签会话/流式渲染/设置/插件面板），独立入口 `/flow` = norp-flow.html 模块流程编排；控制台打印 `listening on http://127.0.0.1:8787/`；可配 `;port=9000`、`;html=自定义主页`、`;flow_html=自定义流程页`（槽位挂载参数，见 5.4）或 `np(port=9000, language="zh_CN")`；frontend 槽位值可直接给 `.html` 路径（HTML 路径直挂，v0.9） |
+| Web（默认） | `norpagent.frontends.web:WebFrontend` | HTTP + SSE，无第三方依赖；页面 = front.html（多标签会话/流式渲染/设置/插件面板），独立入口 `/flow` = norp-flow.html 模块流程编排；控制台打印 `listening on http://127.0.0.1:8787/`；可配 `;port=9000`、`;html=自定义主页`、`;flow_html=自定义流程页`（槽位挂载参数，见 5.4）或 `npa(port=9000, language="zh_CN")`；frontend 槽位值可直接给 `.html` 路径（HTML 路径直挂，v0.9） |
 | 控制台 REPL | `norpagent.frontends.console:ConsoleFrontend` | 显式指定；`/exit`（或 `exit`/`quit`/`exit()`）退出，`/reset` 新会话；在 Python 交互式解释器中自动切换同步模式 |
 | 无头 | `norpagent.frontends.headless:HeadlessFrontend` | 纯 API；`prompt` 模式默认；输出（正文/工具/结果）打印到 stdout |
 
@@ -1324,7 +1326,7 @@ Web UI 的行为与配置项：
 | 事件路由 | 事件 sid 解析优先 `submit()` 登记的原始浏览器会话 id；会话管理器支持指定 id 创建（`create_session(title=..., session_id=...)`），内核续接会话时 id 与浏览器标签页一致 |
 
 ```python
-import norpagent as np
+import norpagent as npa
 from norpagent.builtin.ui.web import WebUI
 from norpagent.frontends.web import WebFrontend
 
@@ -1337,25 +1339,25 @@ ui2 = WebUI(port=9000, config_path=None)
 **页面挂载（html / flow_html 参数）四种写法等价：**
 
 ```python
-import norpagent as np
+import norpagent as npa
 
 # 1. 槽位地址子句（;key=value，推荐）
-np(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
-np(frontend="norpagent.frontends.web:WebFrontend;flow_html=/path/to/flow.html")
+npa(frontend="norpagent.frontends.web:WebFrontend;html=/path/to/my.html")
+npa(frontend="norpagent.frontends.web:WebFrontend;flow_html=/path/to/flow.html")
 
 # 2. 构造函数直接传（WebFrontend / WebUI 均支持）
-np(frontend=WebFrontend(html="<html><body>我的界面</body></html>"))
-np(frontend=WebFrontend(flow_html="/path/to/flow.html"))
+npa(frontend=WebFrontend(html="<html><body>我的界面</body></html>"))
+npa(frontend=WebFrontend(flow_html="/path/to/flow.html"))
 
 # 3. 配置字典
-np(config={"web": {"html": "/path/to/my.html", "flow_html": "/path/to/flow.html"}})
+npa(config={"web": {"html": "/path/to/my.html", "flow_html": "/path/to/flow.html"}})
 
 # 4. 运行时参数透传
-np(html="/path/to/my.html", flow_html="/path/to/flow.html")
+npa(html="/path/to/my.html", flow_html="/path/to/flow.html")
 
 # 5. HTML 路径直挂（v0.9）：frontend 槽位值本身就是 .html 路径，
 #    等价于写法 1 的 html= 子句
-np(frontend="/path/to/my.html")
+npa(frontend="/path/to/my.html")
 
 # 文件路径不存在时构造报错（快速失败，不静默回落默认页面）
 # ValueError: WebUI html 挂载参数既不是 HTML 内容（以 '<' 开头）也不是存在的文件: ...
@@ -1364,12 +1366,12 @@ np(frontend="/path/to/my.html")
 **运行中热替换页面（HTTP 服务不重启、端口不变）：**
 
 ```python
-eng = np()                                  # 或 np.current() 取运行中的引擎
+eng = npa()                                  # 或 npa.current() 取运行中的引擎
 
 # 方式一：remount 页面热替换键（推荐，v0.9）
-np.remount(flow_html="/path/to/flow.html")  # /flow 立即换页
-np.remount(html="/path/to/front.html")      # / 主页面立即换页
-np.remount(flow_html=None)                  # 卸载，回落库内置
+npa.remount(flow_html="/path/to/flow.html")  # /flow 立即换页
+npa.remount(html="/path/to/front.html")      # / 主页面立即换页
+npa.remount(flow_html=None)                  # 卸载，回落库内置
 
 # 方式二：frontend 实例 API
 eng.frontend.mount_page("flow", "/path/to/flow.html")  # /flow 立即换页
@@ -1390,7 +1392,7 @@ beam 连线 / 后端真实执行 / 自动保存），随库发行于
 文本事件协议 T:/R:/C:/U:/E:/Q:），桌面宿主原样兼容。可直接挂载：
 
 ```python
-np(html="front.html")   # 相对工作目录，库按文件路径读取
+npa(html="front.html")   # 相对工作目录，库按文件路径读取
 ```
 
 挂载后聊天 / 会话 / 设置 / 插件面板 / 文件浏览全部走库的 REST API
@@ -1446,13 +1448,13 @@ class TrayFrontend:
 接入并驱动：
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(frontend="myapp.tray_frontend:TrayFrontend", preset="standard")
-fe = np.current().frontend
+npa(frontend="myapp.tray_frontend:TrayFrontend", preset="standard")
+fe = npa.current().frontend
 result = fe.send("你好")        # 引擎在后台循环里执行 Agent
 print(result.final_content)
-np.shutdown()
+npa.shutdown()
 ```
 
 ### 5.6 UIAdapter 渲染层
@@ -1465,7 +1467,7 @@ class UIAdapter(Protocol):
     def notify(self, message, level="info") -> None: ...
 ```
 
-换渲染器：`np(ui=MyRenderer())` 或 `np(ui="web")`（引用注册表已注册名）。
+换渲染器：`npa(ui=MyRenderer())` 或 `npa(ui="web")`（引用注册表已注册名）。
 
 ### 5.7 模块流程画布（FLOW）与 FE 前端模块
 
@@ -1552,20 +1554,20 @@ FE 节点有 **1/2/3 三种形态**（卡片标题栏按钮切换）：
 
 ---
 
-## 第 6 章　np() 启动与生命周期
+## 第 6 章　npa() 启动与生命周期
 
 ### 6.1 启动代码解读
 
 ```python
-import norpagent as np
-np()                    # ①
+import norpagent as npa
+npa()                    # ①
 running = True
 while running:
-    if np.stop() == True:   # ②
+    if npa.stop() == True:   # ②
         running = False
 ```
 
-① `np()` —— `norpagent` 模块是可调用的（模块类替换技术）。它等价于
+① `npa()` —— `norpagent` 模块是可调用的（模块类替换技术）。它等价于
 `norpagent.launch()`，内部依次完成：
 
 1. **参数分拣**：关键字参数中与槽位表（18 个内置槽位 + 运行时
@@ -1580,9 +1582,9 @@ while running:
 4. **引擎启动**：`NorpEngine(layer, registry, preset, loop, frontend, ...)`
    → `engine.start()`：装配 Agent 运行时 → 前端绑定 → 循环线程启动 →
    前端线程启动 → 状态进入 RUNNING；
-5. **单例语义**：已有运行中的引擎时，再次 `np()` 直接返回当前引擎。
+5. **单例语义**：已有运行中的引擎时，再次 `npa()` 直接返回当前引擎。
 
-② `np.stop()` —— 生命周期函数。返回 `True` 表示引擎进入 STOPPED
+② `npa.stop()` —— 生命周期函数。返回 `True` 表示引擎进入 STOPPED
 状态（应用已结束，主循环应退出）；没有引擎时也返回 `True`。
 
 ### 6.2 引擎生命周期状态机
@@ -1593,10 +1595,10 @@ STARTING ──start()──▶ RUNNING ──request_stop()──▶ STOPPING �
 
 | 状态 | 含义 | 进入条件 |
 |---|---|---|
-| STARTING | 装配中 | `np()` 内部 |
+| STARTING | 装配中 | `npa()` 内部 |
 | RUNNING | 接受输入、执行任务 | `engine.start()` 完成 |
 | STOPPING | 正在收尾 | `request_stop()` |
-| STOPPED | 已结束 | 收尾完成（`np.stop()` 为 True） |
+| STOPPED | 已结束 | 收尾完成（`npa.stop()` 为 True） |
 
 停止请求的收尾顺序（`NorpEngine.request_stop`）：
 
@@ -1611,49 +1613,49 @@ STARTING ──start()──▶ RUNNING ──request_stop()──▶ STOPPING �
 **主循环模式**（默认 Web 前端）：
 
 ```python
-np()                            # 默认前端 = Web（frontend web listening on 127.0.0.1:8787）
+npa()                            # 默认前端 = Web（frontend web listening on 127.0.0.1:8787）
 while True:
-    if np.stop():
+    if npa.stop():
         break
 ```
 
 浏览器访问打印的地址打开聊天界面（front.html）。使用其他前端时显式指定：
-`np(frontend="norpagent.frontends.console:ConsoleFrontend")`。
+`npa(frontend="norpagent.frontends.console:ConsoleFrontend")`。
 
 **单次任务模式**（`prompt` 给出时自动使用 headless 前端，输出打印到 stdout）：
 
 ```python
-np(prompt="总结 README", preset="standard")
+npa(prompt="总结 README", preset="standard")
 while True:
-    if np.stop():
+    if npa.stop():
         break
-print(np.current().last_result.final_content)
+print(npa.current().last_result.final_content)
 ```
 
 **纯 API 模式**（无头 + 程序主动 submit）：
 
 ```python
-np(preset="minimal", frontend="norpagent.frontends.headless:HeadlessFrontend")
-eng = np.current()
+npa(preset="minimal", frontend="norpagent.frontends.headless:HeadlessFrontend")
+eng = npa.current()
 result1 = eng.submit("第一个问题")
 result2 = eng.submit("追问", session_id=result1.session_id)   # 同一会话续聊
 eng.request_stop()
 ```
 
-> **注意**：`np()` 不阻塞，引擎在后台线程运行。主线程应当用
-> `np.stop()` 轮询等待（或调用 `np.current().wait()`）。主线程若直接
+> **注意**：`npa()` 不阻塞，引擎在后台线程运行。主线程应当用
+> `npa.stop()` 轮询等待（或调用 `npa.current().wait()`）。主线程若直接
 > 结束进程，daemon 引擎线程随之退出；库已注册 atexit 兜底清理。
 >
 > **特例**：显式使用**控制台前端**时，在 Python 交互式解释器
-> （`>>>` REPL）里调用 `np()` 自动切换为**同步模式**——`np()` 阻塞到
+> （`>>>` REPL）里调用 `npa()` 自动切换为**同步模式**——`npa()` 阻塞到
 > 用户退出（`/exit`、`exit()`、Ctrl+C 或 EOF），期间无需再写轮询循环。
 > 同步模式下主线程独占 stdin。默认 Web 前端在 REPL 中同样适用（后台服务 +
 > 页面交互，不阻塞解释器）。
 
-### 6.4 np() 参数全集
+### 6.4 npa() 参数全集
 
 ```python
-np(
+npa(
     # ── 架构槽位（18 个内置，不填 = 默认逻辑；register_slot 注册的
     #    自定义槽位同样在此传参，见 3.8）──
     async_loop=..., agent_runtime=..., model=..., tools=...,
@@ -1686,7 +1688,7 @@ np(
 `config` 字典的子键约定（0.9，嵌入式 / 高并发调参，详见第 14 章）：
 
 ```python
-np(config={
+npa(config={
     "loop": {"max_workers": 8, "poll_interval": 0.02},   # 循环工作池与轮询
     "web": {"port": 9000, "sse_queue_size": 2048,        # Web UI 与 SSE 背压
             "sse_queue_policy": "drop_oldest"},
@@ -1707,7 +1709,7 @@ np(config={
 | 任务提交 | `on_task_start` |
 | 引擎停止 | `on_agent_shutdown`（L1） |
 
-生命周期订阅写法：`np(hooks={"on_agent_init": fn, ...})`
+生命周期订阅写法：`npa(hooks={"on_agent_init": fn, ...})`
 （钩子体系见第 9 章）。
 
 ---
@@ -1719,9 +1721,9 @@ np(config={
 模型槽位接受：
 
 ```python
-np(model="mock")                  # 注册表名（内置 mock / openai_compat / anthropic）
-np(model=MyProvider())            # 实例
-np(model="myapp.model:create")    # 地址（字符串不匹配任何已注册名时按地址解析）
+npa(model="mock")                  # 注册表名（内置 mock / openai_compat / anthropic）
+npa(model=MyProvider())            # 实例
+npa(model="myapp.model:create")    # 地址（字符串不匹配任何已注册名时按地址解析）
 ```
 
 ModelProvider 协议（`norpagent.protocols.model`）：
@@ -1741,9 +1743,9 @@ class ModelProvider(Protocol):
 三种赋值形态：
 
 ```python
-np(tools=["echo", "get_time"])           # 名字列表：引用注册表
-np(tools={"my_tool": MyTool()})          # 映射：注册并启用
-np(tools=[ToolA(), ToolB()])             # 实例列表：按 name 注册
+npa(tools=["echo", "get_time"])           # 名字列表：引用注册表
+npa(tools={"my_tool": MyTool()})          # 映射：注册并启用
+npa(tools=[ToolA(), ToolB()])             # 实例列表：按 name 注册
 ```
 
 Tool 协议（`norpagent.protocols.tool`）：
@@ -1768,17 +1770,17 @@ minimal 预设使用确定性环境与最简工具集，可用于对比不同模
 固定输入集上的输出：
 
 ```python
-import norpagent as np
+import norpagent as npa
 
 for model_name in ("mock", "openai_compat"):
-    np(preset="minimal", model=model_name, prompt="1+1=?",
+    npa(preset="minimal", model=model_name, prompt="1+1=?",
        frontend="norpagent.frontends.headless:HeadlessFrontend")
     while True:
-        if np.stop():
+        if npa.stop():
             break
-    r = np.current().last_result
+    r = npa.current().last_result
     print(model_name, r.steps, r.usage.total_tokens, r.final_content[:40])
-    np.shutdown()
+    npa.shutdown()
 ```
 
 ---
@@ -1788,17 +1790,17 @@ for model_name in ("mock", "openai_compat"):
 ### 8.1 会话
 
 ```python
-np(session="memory")     # 进程内（默认）
-np(session="sqlite")     # 持久化到 ~/.norpagent/sessions.db
-np(session=MySessionManager())          # 实例
-np(session="myapp.sessions:create")     # 地址
+npa(session="memory")     # 进程内（默认）
+npa(session="sqlite")     # 持久化到 ~/.norpagent/sessions.db
+npa(session=MySessionManager())          # 实例
+npa(session="myapp.sessions:create")     # 地址
 ```
 
 SessionManager 协议：`create_session / get_session / append_message /
 history`。跨会话续聊通过 `session_id`：
 
 ```python
-eng = np.current()
+eng = npa.current()
 r1 = eng.submit("记住：我最喜欢蓝色")
 r2 = eng.submit("我最喜欢什么颜色？", session_id=r1.session_id)
 ```
@@ -1806,9 +1808,9 @@ r2 = eng.submit("我最喜欢什么颜色？", session_id=r1.session_id)
 ### 8.2 沙箱
 
 ```python
-np(sandbox="subprocess")   # 子进程（默认）
-np(sandbox="pooled")       # 池化复用 + 并发上限 + 超时强杀进程树
-np(sandbox="myapp.docker_sandbox:create")
+npa(sandbox="subprocess")   # 子进程（默认）
+npa(sandbox="pooled")       # 池化复用 + 并发上限 + 超时强杀进程树
+npa(sandbox="myapp.docker_sandbox:create")
 ```
 
 Sandbox 协议：`run / close`。`exec_cmd` 工具通过沙箱协议执行，
@@ -1817,8 +1819,8 @@ Sandbox 协议：`run / close`。`exec_cmd` 工具通过沙箱协议执行，
 ### 8.3 调度器
 
 ```python
-np(scheduler="simple")       # 内存队列（默认）
-np(scheduler="persistent")   # 持久化 + 崩溃 resume() 续跑
+npa(scheduler="simple")       # 内存队列（默认）
+npa(scheduler="persistent")   # 持久化 + 崩溃 resume() 续跑
 ```
 
 TaskScheduler 协议：`submit / drain / cancel`。`task_*` 工具族供模型
@@ -1828,8 +1830,8 @@ TaskScheduler 协议：`submit / drain / cancel`。`task_*` 工具族供模型
 ### 8.4 上下文库与项目管理（通用组件命名空间）
 
 ```python
-np(context_store="norpagent.builtin.context:FTS5ContextStore")
-np(project_manager=MyProjectManager())
+npa(context_store="norpagent.builtin.context:FTS5ContextStore")
+npa(project_manager=MyProjectManager())
 ```
 
 这两个槽位走**通用组件命名空间**（`registry.register_component`），
@@ -1838,9 +1840,9 @@ np(project_manager=MyProjectManager())
 ### 8.5 基础服务槽位
 
 ```python
-np(logger=logging.getLogger("my.app"))       # 日志
-np(storage="./my_data")                       # 持久化根
-np(error_handler=lambda exc, eng: print(exc))  # 错误最后防线
+npa(logger=logging.getLogger("my.app"))       # 日志
+npa(storage="./my_data")                       # 持久化根
+npa(error_handler=lambda exc, eng: print(exc))  # 错误最后防线
 ```
 
 `error_handler` 在任务级异常兜底时被调用（签名 `(error, engine)`），
@@ -1915,22 +1917,22 @@ before_model_call.subscribe(log_request, system=reg)    # 指定 Registry
 # 2. 运行时视图：与 registry.hooks 同一总线（多实例推荐）
 agent.hooks.before_model_call.subscribe(log_request)
 
-# 3. 槽位批量订阅：np(hooks={"before_model_call": my_fn})
+# 3. 槽位批量订阅：npa(hooks={"before_model_call": my_fn})
 ```
 
 - 模块级 `Hook` 对象的 `subscribe / unsubscribe / emit / intercept`
   都需要一个 `system` 定位总线，可传 `HookSystem / EventBus /
   Registry / AgentRuntime`（`_resolve_bus` 统一解析）；
   **缺省时落在进程级默认系统**（`hooks.get_default_system()`，
-  自带独立私有总线）——它与 `np()` 引擎的总线不是同一条。
+  自带独立私有总线）——它与 `npa()` 引擎的总线不是同一条。
   给独立 Registry 使用时**务必显式传 system**（每个 Registry
   自带私有总线，保证多实例隔离），否则订阅挂到默认系统上，
   收不到引擎事件；
 - `agent.hooks.before_model_call` 返回 `BoundHook`（绑定到该
   引擎总线的钩子），四个方法无需再传 system；
-- `np(hooks={...})` 槽位（literal 语义）：dict 的键是事件名、
+- `npa(hooks={...})` 槽位（literal 语义）：dict 的键是事件名、
   值是订阅者，装配期统一挂到引擎总线上；热挂载
-  `np.remount(hooks=...)` 时先退订上次的架构级订阅再重挂，
+  `npa.remount(hooks=...)` 时先退订上次的架构级订阅再重挂，
   **不叠加**。槽位值也可以是 `callable(reg)` 工厂：先调用、
   返回 dict 后再订阅。
 
@@ -2072,7 +2074,7 @@ class MyRuntime(AgentRuntime):
   订阅 / 退订安全（3.7 节热挂载即依赖这一点）；
 - 需要干预但不想全局挂订阅者：把逻辑写成独立函数，配合任务级
   params 显式开关（如 jailbreak_guard / harden_prompt，见
-  10.4 节），或只用 np(hooks=...) 槽位在指定引擎上订阅。
+  10.4 节），或只用 npa(hooks=...) 槽位在指定引擎上订阅。
 
 ---
 
@@ -2085,12 +2087,12 @@ class MyRuntime(AgentRuntime):
 ### 10.1 启用方式
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-# 1. np() 槽位方式
-np(security="high")                                  # 字符串：只挂运行态策略，钩子零干预
-np(security={"level": "high", "hooks": True})        # dict：+ 显式钩子干预
-np(security=lambda reg: safe(reg, config={...}))     # callable：完全自定义装配
+# 1. npa() 槽位方式
+npa(security="high")                                  # 字符串：只挂运行态策略，钩子零干预
+npa(security={"level": "high", "hooks": True})        # dict：+ 显式钩子干预
+npa(security=lambda reg: safe(reg, config={...}))     # callable：完全自定义装配
 
 # 2. safe() 直接方式
 from norpagent import safe
@@ -2169,7 +2171,7 @@ kit.uninstall_hooks(registry)                        # 随时卸下，恢复纯�
 - `plugin_config()` 把本上下文转成插件加载器配置（config
   缺省时的兜底）；`to_dict()` 输出完整姿态（与
   `kit.describe()` 一致）；
-- `SecurityContext` 实例可直接作 `np(security=ctx)` 槽位值；
+- `SecurityContext` 实例可直接作 `npa(security=ctx)` 槽位值；
 - config 键名以插件加载器风格为主（plugin_security_audit /
   plugin_network_policy / plugin_trusted_keys 等），另有直白键
   guard_enabled / harden_enabled / hook_intervention / approval /
@@ -2197,7 +2199,7 @@ kit.uninstall_hooks(registry)                        # 随时卸下，恢复纯�
   不动用户 / 插件的其它订阅，钩子管线恢复纯净；
 - `kit.hooks_installed(reg)` 查询当前状态；
 - `kit.uninstall(reg)` 退订钩子订阅并清除 `registry.security`。
-  运行中热挂载 security 槽位（`np.remount(security=...)`）会
+  运行中热挂载 security 槽位（`npa.remount(security=...)`）会
   先 uninstall 旧套件再安装新套件，防同一总线上防护钩子叠加；
 - 热挂载后运行态决策立即生效；钩子干预对后续任务的
   before_input / before_build_messages 生效。
@@ -2279,7 +2281,7 @@ reg.hooks.before_input.subscribe(my_guard)
 
 ```python
 # 生产默认：standard + 显式钩子干预
-np(security={"level": "standard", "hooks": True})
+npa(security={"level": "standard", "hooks": True})
 
 # 严格：high + 白名单网络 + 受信任密钥
 kit = safe(level="high", config={
@@ -2287,10 +2289,10 @@ kit = safe(level="high", config={
     "plugin_network_domain_allowlist": ["api.example.com"],
     "plugin_trusted_keys": ["<公钥hex>"],
 })
-np(security=kit.context)                     # 直接安装 SecurityContext
+npa(security=kit.context)                     # 直接安装 SecurityContext
 
 # 纯决策、零干预：只用审批与网络策略，防护逻辑自己接
-np(security={"level": "standard",
+npa(security={"level": "standard",
              "config": {"guard_enabled": False, "harden_enabled": False}})
 ```
 
@@ -2305,7 +2307,7 @@ np(security={"level": "standard",
 > 配套文档：`docs/plugins.md`（宿主侧）、`norpagent插件开发指南.md`
 > （插件作者侧）。
 
-### 11.1 两种 API 与 np() 槽位
+### 11.1 两种 API 与 npa() 槽位
 
 ```python
 # 便捷入口：一次性加载目录
@@ -2320,16 +2322,16 @@ ps.status()              # 插件清单 + 隔离宿主状态
 ps.reload("my_tool")     # 开发期热重载单个插件
 ps.shutdown()            # 释放进程隔离宿主子进程
 
-# np() 槽位（literal 语义，目录列表）
-np(plugins=["./my_plugins"])
+# npa() 槽位（literal 语义，目录列表）
+npa(plugins=["./my_plugins"])
 # 运行中热替换：旧订阅自动退订，不叠加（3.7 节）
-np.remount(plugins=["./my_plugins_v2"])
+npa.remount(plugins=["./my_plugins_v2"])
 ```
 
-`np(plugins=[...])` 槽位以固定配置装配（audit=warn、验签开启，
+`npa(plugins=[...])` 槽位以固定配置装配（audit=warn、验签开启，
 **不读取** registry.security 的覆盖）；需要精细配置用
 PluginSystem / install_plugin_dirs 直接操作 Registry（或
-callable 槽位值，如 `np(plugins=lambda reg: ps.load())`）。
+callable 槽位值，如 `npa(plugins=lambda reg: ps.load())`）。
 
 ### 11.2 插件格式（与现有应用兼容）
 
@@ -2473,7 +2475,7 @@ EventBus 订阅者：
 
 - `install_plugin_dirs(reg, dirs)` **不传 config** 时自动采用
   `registry.security.plugin_config()`——先 `safe(reg, ...)` 再
-  装插件，插件加载即继承全局安全姿态（注意：np(plugins=...)
+  装插件，插件加载即继承全局安全姿态（注意：npa(plugins=...)
   槽位路径传固定 config，不读 registry.security）；
 - `safe(level="high")` 对插件的影响：审计 block、强制权限
   声明、强制受信任签名（未签名 / 不受信任拒绝）；
@@ -2513,10 +2515,10 @@ config = {
   工具 / 钩子订阅仍留在 Registry（工具表为名字覆盖语义，钩子
   不支持按名整体退订），**生产环境建议重建 Registry 后重新
   加载**；
-- 运行中整体替换用 `np.remount(plugins=[...])`：框架先退订旧
+- 运行中整体替换用 `npa.remount(plugins=[...])`：框架先退订旧
   架构级插件订阅再重装（防叠加，3.7 节）；
 - `ps.shutdown()` / `loader.shutdown()` 释放进程隔离宿主子进程；
-  热挂载 plugins 槽位（`np.remount(plugins=...)`）时框架自动先
+  热挂载 plugins 槽位（`npa.remount(plugins=...)`）时框架自动先
   卸载旧加载器（退订钩子 + 清 sys.modules + 释放隔离宿主）。
 
 ## 第 12 章　预设模式
@@ -2533,10 +2535,10 @@ config = {
 | `embedded` | 嵌入式 / 边缘 / 低资源（0.9） | 纯内存组件 + 最小工具集，**默认 headless 前端**，无磁盘 / 无联网依赖；无凭据时模型自动回落 mock。详见第 14.2 节 |
 
 ```python
-np(preset="standard")
-np(preset="ptc")
-np(preset="embedded")                     # 默认 headless，纯 API 模式
-np(preset=Preset(name="mine", model="mock", tools=["echo"], ...))
+npa(preset="standard")
+npa(preset="ptc")
+npa(preset="embedded")                     # 默认 headless，纯 API 模式
+npa(preset=Preset(name="mine", model="mock", tools=["echo"], ...))
 ```
 
 ### 12.2 自定义预设
@@ -2557,7 +2559,7 @@ my = Preset(
     params={"max_steps": 16},
     components={},
 )
-np(preset=my)
+npa(preset=my)
 ```
 
 ---
@@ -2577,7 +2579,7 @@ norpagent --mode standard --safe high --safe-hooks  # 同时开启钩子干预
 norpagent plugin-sign --gen                       # 插件签名密钥
 ```
 
-CLI 与 `np()` 等价：CLI 内部流程为
+CLI 与 `npa()` 等价：CLI 内部流程为
 「安装默认组件 → 注册预设 → 应用安全 → 加载插件 → 构建运行时」。
 
 ---
@@ -2633,13 +2635,13 @@ print(result.final_content)
 persistent 等组件——声明了这些组件的预设（standard / longrun /
 creative 等）在此注册表上装配会被明确拒绝（报错列出缺失组件名）。
 
-**方式二：`np(preset="embedded")`（开箱即用）：**
+**方式二：`npa(preset="embedded")`（开箱即用）：**
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(preset="embedded")                   # 默认 headless：不启动 HTTP 服务
-eng = np.current()
+npa(preset="embedded")                   # 默认 headless：不启动 HTTP 服务
+eng = npa.current()
 result = eng.submit("你好")             # 纯 API 提交
 eng.request_stop()
 ```
@@ -2648,7 +2650,7 @@ embedded 预设的行为约定：
 
 - **默认前端自动回落 headless**（装配器默认工厂判断 preset 名）；
   需要 Web 界面时显式
-  `np(preset="embedded", frontend="norpagent.frontends.web:WebFrontend")`；
+  `npa(preset="embedded", frontend="norpagent.frontends.web:WebFrontend")`；
 - 模型声明 `openai_compat`：提供任何凭据（参数 / 环境变量）即用真实
   模型，否则回落 mock（离线设备开箱可用）；
 - 组件全部纯内存（memory / subprocess / simple），不声明通用组件——
@@ -2661,7 +2663,7 @@ embedded 预设的行为约定：
 os.environ["NORPAGENT_MAX_WORKERS"] = "1"
 os.environ["NORPAGENT_SUBMIT_POLL"] = "0.5"
 # 或等价：
-np(config={"loop": {"max_workers": 1, "poll_interval": 0.5}})
+npa(config={"loop": {"max_workers": 1, "poll_interval": 0.5}})
 ```
 
 ### 14.3 超高并发部署
@@ -2669,17 +2671,17 @@ np(config={"loop": {"max_workers": 1, "poll_interval": 0.5}})
 **SSE 背压配置（启动参数 → 环境变量 → 运行中热改变）：**
 
 ```python
-import norpagent as np
+import norpagent as npa
 
 # 启动时传入
-np(config={"web": {"sse_queue_size": 2048, "sse_queue_policy": "drop_oldest"}})
+npa(config={"web": {"sse_queue_size": 2048, "sse_queue_policy": "drop_oldest"}})
 # 或运行时参数 / 环境变量
-np(sse_queue_size=2048, sse_queue_policy="drop_oldest")
+npa(sse_queue_size=2048, sse_queue_policy="drop_oldest")
 # NORPAGENT_SSE_QUEUE_SIZE=2048 NORPAGENT_SSE_QUEUE_POLICY=drop_oldest
 
 # 运行中热改变（无需重启，对既有连接立即生效）
 from norpagent.builtin.ui.web import WebUI
-ui = np.current().frontend._ui      # 或直接持有 WebUI 实例
+ui = npa.current().frontend._ui      # 或直接持有 WebUI 实例
 ui.set_sse_queue(sse_queue_size=4096, sse_queue_policy="drop_newest")
 print(ui.streams_info())
 ```
@@ -2749,10 +2751,10 @@ submit 中断唤醒、SSE 三策略与热改变、40 并发 HTTP、断连回收�
 
 | 层次 | 能力 | 入口 |
 |---|---|---|
-| Undo / Redo | 撤销 / 恢复最近一次操作，进程内即时生效 | Web UI 按钮 / Ctrl+Z / Ctrl+Shift+Z / `np.undo()` / `np.redo()` |
-| Rollback | 浏览全部历史快照，回退到任意版本 | Web UI「回退」面板 / `np.rollback(id)` |
+| Undo / Redo | 撤销 / 恢复最近一次操作，进程内即时生效 | Web UI 按钮 / Ctrl+Z / Ctrl+Shift+Z / `npa.undo()` / `npa.redo()` |
+| Rollback | 浏览全部历史快照，回退到任意版本 | Web UI「回退」面板 / `npa.rollback(id)` |
 | Crash Rescue | 主程序无法启动时回退快照，提示最后正常快照 | `norpagent-rescue`（独立 CLI，纯标准库） |
-| Safe Mode | 只加载最小化内核（跳过全部插件），保留核心回退能力 | `np(safemode="on")` / CLI `--safe-mode` |
+| Safe Mode | 只加载最小化内核（跳过全部插件），保留核心回退能力 | `npa(safemode="on")` / CLI `--safe-mode` |
 
 快照内容（模式 A，默认）：架构层全部槽位配置（模式 / 模型 / 工具 /
 会话 / 沙箱 / 前端 / 插件目录 / 安全级别…）+ 引擎运行时参数 + WebUI
@@ -2760,34 +2762,34 @@ submit 中断唤醒、SSE 三策略与热改变、40 并发 HTTP、断连回收�
 后**才落盘。不可序列化的值（实例 / 类 / 函数）记录类型标记，回放时
 跳过并提示（诚实降级，不伪造状态）。
 
-快照模式 B：`np(snapshot_sessions="on")` 额外把会话存储文件复制进
+快照模式 B：`npa(snapshot_sessions="on")` 额外把会话存储文件复制进
 快照附件，回退时整文件恢复（会覆盖回退之后的对话记录）。
 
 存储位置：默认 `~/.norpagent/snapshots/`（manifest.json 时间线 +
 snap/ 每快照一个 JSON + attachments/ 会话附件 + rollback_target.json
 救援回退目标）。可用环境变量 `NORPAGENT_SNAPSHOT_DIR` 或
-`np(snapshot_dir=...)` 覆盖，运行中可用 `np.set_snapshot_dir()`
+`npa(snapshot_dir=...)` 覆盖，运行中可用 `npa.set_snapshot_dir()`
 热切换存储目录（显式编程调用优先级最高）。自动快照默认开启
-（`np(snapshots="off")` 关闭），自动修剪保留最近 200 个。
+（`npa(snapshots="off")` 关闭），自动修剪保留最近 200 个。
 
 ### 15.2 快照与 Undo / Redo
 
-自动快照时机：启动基线、每次系统状态变更（`np.remount` / WebUI
+自动快照时机：启动基线、每次系统状态变更（`npa.remount` / WebUI
 设置保存 / 插件安装 / 模式切换）之后。手动快照：Web UI「回退」面板
-「手动快照」按钮或 `np.snapshot_system("说明")`。
+「手动快照」按钮或 `npa.snapshot_system("说明")`。
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np()                                          # 启动（自动打基线快照）
-np.snapshot_system("装插件之前")               # 手动快照
+npa()                                          # 启动（自动打基线快照）
+npa.snapshot_system("装插件之前")               # 手动快照
 # …做了几次变更（remount / 设置保存 / 装插件）…
-np.undo()                                     # 撤销最近一次操作（进程内即时）
-np.redo()                                     # 恢复撤销
-np.rollback("20260818T230101_ab12cd")         # 回退到任意快照
-np.rollback()                                 # 回退到最后一次正常快照
-np.list_snapshots()                           # 时间线（is_current / is_last_good）
-np.mark_good_snapshot("<id>")                 # 手动标记「正常」
+npa.undo()                                     # 撤销最近一次操作（进程内即时）
+npa.redo()                                     # 恢复撤销
+npa.rollback("20260818T230101_ab12cd")         # 回退到任意快照
+npa.rollback()                                 # 回退到最后一次正常快照
+npa.list_snapshots()                           # 时间线（is_current / is_last_good）
+npa.mark_good_snapshot("<id>")                 # 手动标记「正常」
 ```
 
 语义要点：
@@ -2836,15 +2838,15 @@ norpagent-rescue mark-good <id>              # 手动标记「正常」
 norpagent-rescue prune --keep 50             # 只保留最近 N 个
 ```
 
-回退后下一次 `norpagent` / `np()` 启动**自动消费**回退目标
+回退后下一次 `norpagent` / `npa()` 启动**自动消费**回退目标
 （rollback_target.json，消费后删除）：文件级恢复（WebUI 设置 /
 会话文件）立即执行，快照槽位配置合并进本次启动——**本次显式给出
 的参数优先**（救援是兜底，不覆盖用户的自觉选择）。启动失败时 CLI
-与 np() 都会打印自救指引（安全模式 + 救援命令）。
+与 npa() 都会打印自救指引（安全模式 + 救援命令）。
 
 ### 15.5 安全模式（Safe Mode）
 
-入口：`np(safemode="on")`、CLI `norpagent --safe-mode`。未填写默认
+入口：`npa(safemode="on")`、CLI `norpagent --safe-mode`。未填写默认
 不进入安全模式（任何非 on 值都不触发）。
 
 行为（只加载最小化内核）：
@@ -2859,8 +2861,8 @@ norpagent-rescue prune --keep 50             # 只保留最近 N 个
    修复后正常重启。
 
 ```python
-import norpagent as np
-np(safemode="on")          # 最小化内核 + Web 回退面板
+import norpagent as npa
+npa(safemode="on")          # 最小化内核 + Web 回退面板
 ```
 
 ```bash
@@ -3003,7 +3005,7 @@ api.shutdown()
 | 层级 | 目标 | 入口 |
 |---|---|---|
 | 快照回退 | 配置/插件坏了，回退到正常状态 | `norpagent-rescue rollback --last-good` |
-| 安全模式 | 起不来也要保留回退能力 | `np(safemode="on")` / `--safe-mode` |
+| 安全模式 | 起不来也要保留回退能力 | `npa(safemode="on")` / `--safe-mode` |
 | **人类救援** | **模型死了，人替模型干活** | `norpagent-rescue tools / tool-call / manual / serve` |
 
 三者互补：先回退（或安全模式）救配置，再用手操接管推进工作，模型
@@ -3016,15 +3018,15 @@ api.shutdown()
 ### 16.1 FastAPI 集成
 
 ```python
-import norpagent as np
+import norpagent as npa
 from fastapi import FastAPI
 
-np(preset="standard", frontend="norpagent.frontends.headless:HeadlessFrontend")
+npa(preset="standard", frontend="norpagent.frontends.headless:HeadlessFrontend")
 app = FastAPI()
 
 @app.post("/chat")
 def chat(text: str, session_id: str | None = None):
-    result = np.current().submit(text, session_id=session_id)
+    result = npa.current().submit(text, session_id=session_id)
     return {"content": result.final_content, "session_id": result.session_id,
             "status": result.status}
 ```
@@ -3032,10 +3034,10 @@ def chat(text: str, session_id: str | None = None):
 ### 16.2 桌面应用集成（pywebview 风格）
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(frontend="myapp.tray_frontend:TrayFrontend")
-fe = np.current().frontend
+npa(frontend="myapp.tray_frontend:TrayFrontend")
+fe = npa.current().frontend
 
 # JS 桥接层把用户输入转发给 fe.send()；
 # 事件总线订阅 on_content 把流式输出推回前端。
@@ -3043,9 +3045,9 @@ fe = np.current().frontend
 
 ### 16.3 集成要点
 
-1. **单例引擎**：运行中的引擎是单例，`np()` 幂等返回当前引擎；
-2. **生命周期**：主循环轮询 `np.stop()`，进程退出有 atexit 兜底清理；
-3. **装配观测**：`np.current().layer.describe()` 打印装配清单。
+1. **单例引擎**：运行中的引擎是单例，`npa()` 幂等返回当前引擎；
+2. **生命周期**：主循环轮询 `npa.stop()`，进程退出有 atexit 兜底清理；
+3. **装配观测**：`npa.current().layer.describe()` 打印装配清单。
 
 ---
 
@@ -3056,13 +3058,13 @@ python tests/test_p1_smoke.py    # 内核/协议冒烟
 python tests/test_p2_smoke.py    # 适配器/工具/会话
 python tests/test_p3_smoke.py    # 上下文/调度/沙箱/安全/插件/Web
 python tests/test_p4_smoke.py    # 钩子/安全/PTC/隔离
-python tests/test_p5_arch.py     # 架构层/地址函数/np()/nasyncio
+python tests/test_p5_arch.py     # 架构层/地址函数/npa()/nasyncio
 ```
 
 调试辅助：
 
 ```python
-eng = np.current()
+eng = npa.current()
 print(eng.state)              # 引擎状态
 print(eng.layer.describe())   # 装配清单
 print(eng.last_result)        # 最近任务结果
@@ -3080,18 +3082,18 @@ reg = Registry(); install_defaults(reg); register_all_presets(reg)
 agent = AgentRuntime(reg, preset="minimal")
 result = agent.run("你好")
 
-# 新写法：np() 装配（手工装配 API 保留可用）
-import norpagent as np
-np(preset="minimal", prompt="你好",
+# 新写法：npa() 装配（手工装配 API 保留可用）
+import norpagent as npa
+npa(preset="minimal", prompt="你好",
    frontend="norpagent.frontends.headless:HeadlessFrontend")
 while True:
-    if np.stop():
+    if npa.stop():
         break
-result = np.current().last_result
+result = npa.current().last_result
 ```
 
 手工装配 API（Registry / AgentRuntime / Preset）**保留可用**；
-`np()` 是其声明式封装。
+`npa()` 是其声明式封装。
 
 ### 18.2 从旧桌面应用迁移
 
@@ -3117,7 +3119,7 @@ result = np.current().last_result
 - 0.7 新增 Web 前端 `html` 槽位挂载参数（`;key=value` 地址子句 /
   构造函数 / 配置字典 / 运行时参数四种途径替换 `/` 路由页面），
   并修复 `;key=value` 地址子句的解析链路；新增**运行中热挂载**
-  （`np.remount()` 任何槽位运行时替换，见 3.7 节）；
+  （`npa.remount()` 任何槽位运行时替换，见 3.7 节）；
 - 0.8 默认事件循环迁移到**自研 nasyncio 核心**（原 nasync_io
   打包进库为 `norpagent.nasyncio`）：库内**零 `import asyncio`**，
   不再依赖标准 asyncio（原因见 4.7）。默认地址改为
@@ -3135,15 +3137,15 @@ result = np.current().last_result
 - 0.9 槽位表热插拔（3.8 节）：`register_slot()` / `unregister_slot()`
   运行时注册 / 注销**自定义槽位**（`SlotSpec.applier` 声明装配逻辑，
   `remount_rebuild_agent` 声明热替换后是否热重建 AgentRuntime），
-  注册即接入 `np()` 参数校验、ArchLayer 装配（connect 幂等补齐晚
-  注册槽位）、`np.remount()` 热替换、`layer.describe()` 清单全管线；
+  注册即接入 `npa()` 参数校验、ArchLayer 装配（connect 幂等补齐晚
+  注册槽位）、`npa.remount()` 热替换、`layer.describe()` 清单全管线；
   支持 `replace=True` 规格热替换；内置 18 槽位受保护（值仍可随时
   热替换）；槽位表操作线程安全。行为兼容：既有 18 槽位装配 / 热挂载
   语义完全不变；
 - 0.9 工作回退（第 15 章）：快照时间线 + Undo / Redo / Rollback
   （进程内即时生效，复用 remount 热挂载管线）+ 独立崩溃救援 CLI
   `norpagent-rescue`（纯标准库，提示最后正常快照一键恢复，回退
-  目标下次启动自动消费）+ 安全模式（`np(safemode="on")` / CLI
+  目标下次启动自动消费）+ 安全模式（`npa(safemode="on")` / CLI
   `--safe-mode`，只加载最小化内核）；自动快照默认开启（remount /
   设置保存 / 插件安装后），敏感键脱敏落盘，支持自定义快照提供者
   与快照模式 B（含会话数据文件）；
@@ -3153,22 +3155,22 @@ result = np.current().last_result
 
 ## 第 19 章　常见问题（FAQ）
 
-**Q1：`np()` 会阻塞吗？**
+**Q1：`npa()` 会阻塞吗？**
 不会。引擎在后台线程运行，主线程继续执行——这正是
-`while running: if np.stop()` 模式存在的原因。
+`while running: if npa.stop()` 模式存在的原因。
 
-**Q2：`np.stop()` 什么时候变 True？**
+**Q2：`npa.stop()` 什么时候变 True？**
 引擎 STOPPED：单次任务跑完、前端 `/exit`、显式 `shutdown()`、
 或任何 `request_stop()`。没有引擎时恒为 True。
 
 **Q3：怎么传模型 API Key？**
 ```python
-np(model="openai_compat", model_name="deepseek-v4-flash",
+npa(model="openai_compat", model_name="deepseek-v4-flash",
    base_url="https://api.deepseek.com/v1", api_key="sk-...")
 ```
 `model_name / base_url / api_key` 是模型快捷参数：当模型是内置适配器名
 时自动重新构造提供者（与 CLI 行为一致）；或直接设置环境变量
-`OPENAI_API_KEY`；或传构造好的提供者实例 `np(model=MyProvider())`。
+`OPENAI_API_KEY`；或传构造好的提供者实例 `npa(model=MyProvider())`。
 
 **Q4：地址字符串会不会造成任意代码执行？**
 会。地址字符串指定要加载的模块，地址值由库的使用者在代码中传入。
@@ -3181,7 +3183,7 @@ np(model="openai_compat", model_name="deepseek-v4-flash",
 **Q6：循环系统替换后钩子还工作吗？**
 工作。钩子挂在事件总线（底层最小内核）上，与循环系统无关。
 
-**Q7：`np(async_loop=...)` 和 `np.nasyncio(...)` 有什么区别？**
+**Q7：`npa(async_loop=...)` 和 `npa.nasyncio(...)` 有什么区别？**
 没有区别，同一条路径；前者是槽位写法，后者是架构函数写法。
 
 **Q8：`/flow` 画布、FE 前端模块、输入框体系是什么？**
@@ -3212,13 +3214,13 @@ deepseek-v4-flash / deepseek-v4-pro；旧名在提示列表、远端模型坞
 无需重启。详见第 5.7 节「智能体工具挂载」与 `docs/flow.md` 第 9 节。
 
 **Q11：启动后能换模型 / 换前端 / 换模块吗？（运行中热挂载）**
-能。`np.remount(slot=value)` 在引擎运行中替换任意槽位：组件槽位
+能。`npa.remount(slot=value)` 在引擎运行中替换任意槽位：组件槽位
 （model / tools / hooks / security / plugins）下一次 run() 生效；
 装配槽位（session / sandbox / scheduler / ui / agent_runtime /
 preset / context_store / project_manager）触发 AgentRuntime 热重建；
 frontend / async_loop 停旧启新；logger / storage / error_handler
 即时更新。字符串地址在重挂载前自动失效模块缓存与 .pyc，
-「改模块文件 → np.remount(model="myapp.model:create")」即热重载。
+「改模块文件 → npa.remount(model="myapp.model:create")」即热重载。
 重复挂载的架构级订阅先退订再重挂，不叠加。详见第 3.7 节。
 
 **Q12：Ctrl+C 为什么之前会失灵？现在怎么保证打断得了？**
@@ -3244,34 +3246,34 @@ Agent 轮次边界以 stopped 收尾。任务执行体可用
 **Q14：嵌入式设备 / 超高并发服务器怎么部署？（0.9）**
 - **嵌入式**：`install_core()` 自建注册表（不导入 sqlite3 /
   http.server）+ `build_embedded_preset()`，或直接
-  `np(preset="embedded")`（默认 headless 前端、mock 回落）；工作
+  `npa(preset="embedded")`（默认 headless 前端、mock 回落）；工作
   线程数用 `NORPAGENT_MAX_WORKERS=1`（或 `config={"loop":
   {"max_workers": 1}}`）收紧，轮询用 `NORPAGENT_SUBMIT_POLL` 放宽。
 - **超高并发**：SSE 每连接有界缓冲默认 1024 条、慢客户端丢最旧
-  （`drop_oldest`），启动时 `np(config={"web": {"sse_queue_size":
+  （`drop_oldest`），启动时 `npa(config={"web": {"sse_queue_size":
   2048}})` 配置，运行中 `WebUI.set_sse_queue(...)` / `POST
   /api/streams` 热改变；帧批量写出（默认 32 条 / 50ms）降低系统
   调用；EventBus 写时复制免每事件列表复制。完整说明见第 14 章。
 
 **Q15：框架没有我需要的槽位怎么办？（槽位表热插拔，0.9）**
 自己注册一个：`register_slot(SlotSpec(name=..., string_semantics=...,
-applier=...))`。注册即接入 `np()` 参数校验、装配、`np.remount()`
+applier=...))`。注册即接入 `npa()` 参数校验、装配、`npa.remount()`
 热替换、`layer.describe()` 清单全管线；applier 拿到解析后的槽位值
 与 components / extras / overrides / meta 四个可变容器，可注册通用
 组件（`remount_rebuild_agent=True` 时热替换后热重建 AgentRuntime）、
 挂事件订阅（用 meta 记录退订，保证重入安全）、或向引擎提供附加
-对象。内置 18 槽位受保护不可覆盖 / 注销，其值可随时 `np.remount`
+对象。内置 18 槽位受保护不可覆盖 / 注销，其值可随时 `npa.remount`
 热替换。完整契约见 3.8 节。
 
 **Q16：怎么撤销一次配置变更 / 回退到之前的状态？（工作回退，0.9）**
-三步走：进程内 `np.undo()` / `np.redo()`（Web UI Ctrl+Z /
+三步走：进程内 `npa.undo()` / `npa.redo()`（Web UI Ctrl+Z /
 Ctrl+Shift+Z 或「回退」面板按钮，即时生效）；回退任意版本
-`np.rollback("<快照id>")`（`np.list_snapshots()` 浏览时间线，
-`np.rollback()` 无参 = 最后正常快照）；主程序起不来了用
+`npa.rollback("<快照id>")`（`npa.list_snapshots()` 浏览时间线，
+`npa.rollback()` 无参 = 最后正常快照）；主程序起不来了用
 `norpagent-rescue rollback --last-good`（纯标准库 CLI，下次启动
-自动应用），或 `norpagent --safe-mode` / `np(safemode="on")`
+自动应用），或 `norpagent --safe-mode` / `npa(safemode="on")`
 只加载最小化内核修配置。快照默认存 `~/.norpagent/snapshots/`，
-敏感键脱敏，自动快照默认开启（可 `np(snapshots="off")` 关闭）。
+敏感键脱敏，自动快照默认开启（可 `npa(snapshots="off")` 关闭）。
 完整语义见第 15 章。
 
 ---
@@ -3299,7 +3301,7 @@ Ctrl+Shift+Z 或「回退」面板按钮，即时生效）；回退任意版本
 | storage | literal | ~/.norpagent | - |
 | error_handler | literal | 记录日志 | - |
 
-> 运行中热挂载（3.7）：所有槽位均可 `np.remount(slot=value)` 替换。
+> 运行中热挂载（3.7）：所有槽位均可 `npa.remount(slot=value)` 替换。
 > `agent_runtime` 为 `defer_factory` 槽位（工厂推迟到引擎装配期调用）。
 > 槽位表热插拔（3.8）：`register_slot()` 可注册自定义槽位加入本表。
 
@@ -3324,23 +3326,23 @@ Ctrl+Shift+Z 或「回退」面板按钮，即时生效）；回退任意版本
 
 ```python
 # 模块入口
-np()                      # launch()
-np.stop()                 # 生命周期轮询
-np.nasyncio(address=...)  # 事件循环架构函数（np.nasyncio 绑定自研核心模块，可调用）
-np.current() / np.submit() / np.shutdown()
-np.remount(model=..., ...)   # 运行中热挂载：任何槽位均可替换
+npa()                      # launch()
+npa.stop()                 # 生命周期轮询
+npa.nasyncio(address=...)  # 事件循环架构函数（npa.nasyncio 绑定自研核心模块，可调用）
+npa.current() / npa.submit() / npa.shutdown()
+npa.remount(model=..., ...)   # 运行中热挂载：任何槽位均可替换
 
 # 工作回退（第 15 章）
 from norpagent.recovery import (snapshot_system, undo, redo, rollback,
                                 list_snapshots, mark_good, last_good_id,
                                 register_snapshot_provider, set_snapshot_dir,
                                 prune, RecoveryError)
-np.snapshot_system("说明")        # 手动快照（顶层便捷入口）
-np.undo() / np.redo()             # 撤销 / 恢复（进程内即时生效）
-np.rollback("<id>")               # 回退到任意快照（缺省 = 最后正常）
-np.mark_good_snapshot("<id>")     # 标记「正常」
-np(safemode="on")                 # 安全模式：只加载最小化内核
-np(snapshot_dir=..., snapshots="off", snapshot_sessions="on")  # 快照配置
+npa.snapshot_system("说明")        # 手动快照（顶层便捷入口）
+npa.undo() / npa.redo()             # 撤销 / 恢复（进程内即时生效）
+npa.rollback("<id>")               # 回退到任意快照（缺省 = 最后正常）
+npa.mark_good_snapshot("<id>")     # 标记「正常」
+npa(safemode="on")                 # 安全模式：只加载最小化内核
+npa(snapshot_dir=..., snapshots="off", snapshot_sessions="on")  # 快照配置
 # 崩溃救援：norpagent-rescue list|show|rollback|mark-good|prune
 # 人类救援（15.6）：norpagent-rescue tools|tool-call|manual|serve
 from norpagent.rescue_api import (RescueToolEnvironment, RescueToolAPI)
@@ -3390,7 +3392,7 @@ from norpagent.runtime import (launch, current, stop, submit,
                                shutdown, NorpEngine, EngineState, EngineError)
 # 任务级槽位注入（3.9）：submit(text, slot_overrides={...})
 #   engine.submit("任务", slot_overrides={"model": "anthropic", "tools": [...]})
-#   np.submit("任务", slot_overrides={"session": {"name": "memory", "persist": True}})
+#   npa.submit("任务", slot_overrides={"session": {"name": "memory", "persist": True}})
 
 # 内核（手工装配，等价保留）
 from norpagent import (Registry, EventBus, Preset, AgentRuntime,
@@ -3427,11 +3429,11 @@ ui.set_sse_queue(4096, "drop_newest")   # 运行中热改变（POST /api/streams
 ui.streams_info()                        # 订阅者数 / 丢弃事件数 / 缓冲深度
 # WebFrontend 同构入口：frontend.mount_page(page, html)
 # remount 页面热替换键（v0.9）：
-#   np.remount(flow_html="/path/to/new-flow.html")  # /flow 立即换页
-#   np.remount(html="/path/to/new-front.html")      # / 主页面立即换页
-#   np.remount(flow_html=None)                      # 卸载挂载，回落库内置
+#   npa.remount(flow_html="/path/to/new-flow.html")  # /flow 立即换页
+#   npa.remount(html="/path/to/new-front.html")      # / 主页面立即换页
+#   npa.remount(flow_html=None)                      # 卸载挂载，回落库内置
 # frontend 槽位 HTML 路径直挂（v0.9）：
-#   np(frontend="/path/to/my.html")  ==  np(frontend="...WebFrontend;html=/path/to/my.html")
+#   npa(frontend="/path/to/my.html")  ==  npa(frontend="...WebFrontend;html=/path/to/my.html")
 ```
 
 ---
@@ -3729,7 +3731,7 @@ WebUI.on_event()     接收 AgentEvent → 推给全部 SSE 订阅者 + 记录�
 
 ### 22.5 页面与前端模块（FE）
 
-- 页面：`/`（front.html）与 `/flow`（norpflow.html），均可运行中热替换（`mount_page` / `np.remount(html=...)` / `np.remount(flow_html=...)`），HTTP 不重启、端口不变；
+- 页面：`/`（front.html）与 `/flow`（norpflow.html），均可运行中热替换（`mount_page` / `npa.remount(html=...)` / `npa.remount(flow_html=...)`），HTTP 不重启、端口不变；
 - FE 前端模块：`.html` / `.js` / `.ts` 文件（`fe_read_file` 按 mime 返回），启动后 `_scan_fe_modules` 扫描模块目录恢复列表（重启不丢失）；
 - 独立配置：`fe_save_config` / `fe_load_config`（无记录时返回全局配置副本作为默认值来源，互不干扰）。
 
@@ -3830,7 +3832,7 @@ subscribe / remount）下写者持锁复制列表期间，emit 会被挡在锁�
 | 故障层 | 现象 | 可用入口 | 依赖 |
 |---|---|---|---|
 | 模型死 | 循环 / 引擎正常，模型调用失败 | `norpagent-rescue tools / tool-call / manual / serve` | 需框架可导入（`rescue_api` 惰性加载） |
-| 引擎死 | 循环可能还活着，AgentRuntime 起不来 | `norpagent-rescue rollback` / `np(safemode="on")` | 纯标准库 |
+| 引擎死 | 循环可能还活着，AgentRuntime 起不来 | `norpagent-rescue rollback` / `npa(safemode="on")` | 纯标准库 |
 | 循环死 | 调度 / 任务全部瘫痪 | `norpagent-rescue list / show / rollback / mark-good / prune` | 纯标准库 |
 
 **核心原则（rescue.py 的隔离边界）**：
@@ -3909,9 +3911,9 @@ rt.join(timeout)                                      # 等循环线程退出并
 AgentRuntime 的模型调用路径：
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-engine = np.current()                      # 已启动的引擎（循环线程 + 工作池活着）
+engine = npa.current()                      # 已启动的引擎（循环线程 + 工作池活着）
 loop = engine.async_loop                   # LoopRuntime 协议实例
 
 # 方式一：同步函数（工作池执行，阻塞等结果）
@@ -4067,7 +4069,7 @@ loop.call_soon_threadsafe(loop.stop)
 │        ├─ 活着 → norpagent-rescue tools / tool-call / manual / serve
 │        │           （或程序化：engine.async_loop.submit(λ 手动工具)）
 │        └─ 死了 → 快照回退 rollback --last-good（纯标准库）
-│                  → 仍起不来 → np(safemode="on") 最小内核
+│                  → 仍起不来 → npa(safemode="on") 最小内核
 └─ 否 → 但任务卡死 / 无响应？
          ├─ rt.interrupt() / loop.abort_main() 强停（24.2.5）
          ├─ 循环线程也死了 → 裸 EventLoop 重建 + RescueToolEnvironment（24.2.4）
@@ -4085,12 +4087,1652 @@ loop.call_soon_threadsafe(loop.stop)
 
 ---
 
+## 第 25 章　开发者实战：模块、槽位、插件与工具开发
+
+> 前 24 章回答「框架能做什么」，本章回答「你如何开发」：逐个模块的
+> 开发方法（协议 → 实现 → 注册 → 接入 → 热重载）、槽位开发的完整
+> 契约（含热重载红线：**键值对的值必须是有效模块**）、插件与工具的
+> 完整开发示例，最后用一节回到架构与最小主异步循环内核——理解它，
+> 你就理解了一切扩展点为什么存在、热重载为什么安全。
+
+### 25.1 架构速览与最小主异步循环内核
+
+#### 25.1.1 一张图看懂架构（速览）
+
+NorpAgent 的架构一句话：**除最小内核外，全部组件都是可替换槽位**。
+
+```
+你的应用：npa() / npa.stop() / npa.nasyncio() / npa.current().submit()
+    │
+运行时层 runtime/    生命周期状态机 + 线程编排（NorpEngine）
+    │
+架构层 arch/         槽位表（SLOT_SPECS）+ 地址解析（address）+ 装配（ArchLayer）
+    │
+循环系统 loops/      LoopRuntime 协议 + 默认 NasyncioLoopRuntime（自研 nasyncio 核心）
+    │
+内核 kernel/         Registry（注册表）+ EventBus（事件总线）+ AgentRuntime（Agent 循环）
+    │
+协议层 protocols/    模型 / 工具 / 会话 / 沙箱 / 调度器 / UI / 插件 全部接口契约
+    │
+实现层 builtin/      内置组件（与第三方实现地位完全平等，同样走注册表）
+```
+
+- **最小内核只有四样**：`ArchLayer`（槽位连接器）、`address`（地址解析）、
+  `Registry`（注册表）、`EventBus`（事件总线）——其余全部是槽位（2.3 节）；
+- **依赖方向单向下行**：上层 import 下层，下层不得反向依赖上层（2.6.1）；
+- **四类扩展点**：事件订阅（第 9 章）/ 组件替换（第 3 章）/ 通用组件
+  （2.6.3）/ 全新槽位（3.8 与 25.10）/ 外部插件（第 11 章与 25.11）；
+- **零修改红线**：框架核心代码零修改，一切扩展走槽位 / 钩子 / 注册表。
+
+#### 25.1.2 最小主异步循环内核：EventLoop 内部机制
+
+`norpagent.nasyncio.EventLoop`（自研，零 asyncio 依赖）是全部调度的心脏。
+一次 `npa()` 启动后，引擎的 submit → 循环 submit → 工作池 → 结果，全部
+围绕下面五样结构运转：
+
+| 结构 | 作用 |
+|---|---|
+| `_ready`（双端队列） | 待执行回调：`call_soon` / 到期定时器 / Task 推进 |
+| `_scheduled`（时间堆） | 定时器：`(when, seq, TimerHandle)`，`call_later` / `sleep` |
+| `_ts_queue`（线程安全队列） | 跨线程提交：`call_soon_threadsafe` |
+| 自管道（socketpair） | 跨线程唤醒阻塞在 `selector.select` 上的循环线程 |
+| `_selector` | 只监听自管道可读事件 |
+
+每一轮 `_run_once()` 的流程（这也是「最小主异步循环」的标准范式）：
+
+```
+1. 到期定时器出堆 → 移入 _ready
+2. 计算 select 等待时长（有 ready 等 0；有定时器等到期；否则无限等）
+3. 先 drain 一次线程安全队列（减少无谓唤醒）
+4. selector.select(wait)——自管道可读或定时器到期才醒来
+5. drain 自管道 + 线程安全队列 → 全部并入 _ready
+6. 按快照长度执行 _ready（防饥饿），回调异常打印后继续，不击穿循环
+```
+
+**Future / Task 的 trampoline 推进**：`Task._step()` 调 `coro.send(None)`，
+协程 `yield` 出 Future 时挂起并注册 `_on_waiter_done`；Future 完成时
+回调把 `_step` 重新排入 ready 队列继续推进——循环线程从不等待任何
+协程，它只负责「排队的回调逐个跑」。
+
+**取消穿透**：`Task.cancel()` 自动检测调用线程——循环线程内走
+`call_soon`，其他线程走 `call_soon_threadsafe`（写自管道立即唤醒），
+因此**外部线程可以直接取消任意任务**（标准 asyncio 的 `Task.cancel()`
+非线程安全，这是自研核心的关键修复，见 4.7）；取消以
+`coro.throw(CancelledError)` 注入，由协程决定响应或吞掉。
+
+**三个修复过的经典坑**（4.5 节详述）：
+
+1. 跨线程 `Future.add_done_callback` 在已完成时必须走
+   `call_soon_threadsafe`（写自管道），否则循环阻塞在 selector 上
+   收不到唤醒，等待方永久挂起；
+2. `Future.result()` 线程安全（不做未经唤醒的裸等待）；
+3. `EventLoop.abort_main()` 提供线程安全的「即时停止」——向主任务
+   注入 `CancelledError`，不等当前 await 自然结束（24.2 详述）。
+
+#### 25.1.3 教学级最小事件循环（约 40 行）
+
+理解内核最好的方式是亲手写一个最小版本。下面是一个可运行的
+「最小主异步循环」（与自研核心同构，仅演示原理）：
+
+```python
+# myapp/mini_loop.py —— 教学用最小事件循环（说明原理，生产请用库内置核心）
+import heapq, socket, selectors, time, threading
+from collections import deque
+
+
+class MiniLoop:
+    def __init__(self):
+        self._ready = deque()          # 待执行回调
+        self._timers = []              # 时间堆 [(when, seq, cb)]
+        self._seq = 0
+        self._sel = selectors.DefaultSelector()
+        self._ssock, self._csock = socket.socketpair()
+        self._ssock.setblocking(False)
+        self._sel.register(self._ssock, selectors.EVENT_READ)
+
+    def call_soon(self, cb, *args):    # 循环线程内
+        self._ready.append((cb, args))
+        self._wake()
+
+    def call_later(self, delay, cb, *args):   # 定时
+        self._seq += 1
+        heapq.heappush(self._timers, (time.monotonic() + delay,
+                                      self._seq, cb, args))
+
+    def call_soon_threadsafe(self, cb, *args):  # 跨线程：写自管道唤醒
+        self._ready.append((cb, args))
+        self._wake()
+
+    def _wake(self):                   # 唤醒阻塞在 select 的循环线程
+        try:
+            self._csock.send(b"\0")
+        except OSError:
+            pass
+
+    def run_forever(self):
+        while True:
+            # 1. 到期定时器 → ready
+            now = time.monotonic()
+            while self._timers and self._timers[0][0] <= now:
+                _, _, cb, args = heapq.heappop(self._timers)
+                self._ready.append((cb, args))
+                now = time.monotonic()
+            # 2. select 等待时长
+            wait = 0.0 if self._ready else (
+                max(0.0, self._timers[0][0] - now) if self._timers else None)
+            # 3. 阻塞等待（自管道可读或定时器到期）
+            try:
+                events = self._sel.select(wait)
+            except (InterruptedError, OSError):
+                events = []
+            for _key, _mask in events:
+                self._ssock.recv(4096)          # 清空唤醒字节
+            # 4. 按快照执行 ready（防饥饿）
+            n = len(self._ready)
+            for _ in range(n):
+                cb, args = self._ready.popleft()
+                try:
+                    cb(*args)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()       # 回调异常不击穿循环
+
+
+if __name__ == "__main__":
+    loop = MiniLoop()
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    loop.call_later(0.5, lambda: print("timer fired"))
+    loop.call_soon_threadsafe(lambda: print("hello from main thread"))
+    time.sleep(1)
+    loop.call_soon(loop._ssock.close)
+```
+
+真实核心在此基础上补充：Future / Task（trampoline）、取消注入、
+`run_until_complete` / `abort_main`、子进程封装、同步原语
+（Event / Lock / Condition）。掌握上面的 40 行，就掌握了
+「最小主异步循环内核」的全部骨架——后续 25.2 ~ 25.11 的所有
+模块开发都不再需要修改它。
+
+#### 25.1.4 模块开发的通用五步
+
+无论开发哪一种模块（工具 / 模型 / 会话 / 沙箱 / 调度器 / 前端 /
+循环 / 通用组件），流程完全一致（2.6.4 节的展开版）：
+
+1. **读协议**：`norpagent/protocols/` 下的接口契约（模型 / 工具 /
+   会话 / 沙箱 / 调度器 / UI / 插件），确认要实现的协议与数据类；
+2. **写实现**：新建模块，只依赖 protocols 与标准库（参照
+   `builtin/` 下的写法，内置组件与第三方组件地位完全平等）；
+3. **注册**：`reg.register_*(...)`（Registry API 见 25.2.5 表格）
+   或 `registry.register_component(kind, name, factory)`；
+4. **声明使用**：预设里声明（`session="my_impl"`），或启动时
+   `npa(session="my_impl")` / 地址字符串 `npa(session="myapp.sessions:create")`；
+5. **接钩子**（可选）：在实现内经 registry 发布 / 订阅事件（第 9 章）。
+
+热重载是第 4 步的自然延伸：`npa.remount(session="myapp.sessions:create")`
+在运行中重新解析地址、**先失效模块缓存与 .pyc**（3.7 节），因此
+「改实现代码 → remount」即可热更新，无需重启进程。
+
+---
+
+### 25.2 工具开发详解（重点）
+
+工具是 Agent 的「技能」：模型决定**要不要**调用，你决定**怎么**执行。
+开发工具是接入 NorpAgent 最频繁、收益最高的扩展方式。
+
+#### 25.2.1 协议与数据类
+
+```python
+# norpagent/protocols/tool.py
+class Tool(Protocol):
+    name: str                                        # 工具唯一名（模型调用名）
+    def schema(self) -> dict: ...                    # OpenAI function schema
+    def run(self, args: dict, ctx: RunContext) -> ToolResult: ...
+
+@dataclass
+class ToolResult:
+    output: str = ""                                 # 回填给模型的文本
+    success: bool = True
+    error: str = ""
+```
+
+要点：
+
+- `schema()` 返回 OpenAI function 格式（`type/function/name/description/
+  parameters`），是模型看到的世界——**描述写得好不好，直接决定模型
+  会不会正确调用**；
+- `run()` 的 `args` 是模型按 schema 生成的 JSON 参数（已解析为 dict）；
+- 返回 `ToolResult`：成功填 `output`；失败置 `success=False` 并填
+  `error`（模型会看到 `[工具执行失败] ...` 前缀）；
+- 可抛异常，内核会捕获并转为统一的失败 ToolResult（`tool_error`），
+  但**显式返回失败结果**更可控。
+
+#### 25.2.2 完整示例：从零写一个「天气查询」工具
+
+```python
+# myapp/weather_tool.py —— 开发者自己的工具模块
+from __future__ import annotations
+
+import json
+from typing import Any, Dict
+from urllib.request import urlopen
+
+from norpagent.protocols.tool import Tool, ToolResult
+
+
+class WeatherTool:
+    name = "weather"
+
+    def __init__(self, api_key: str = "", base_url: str = "https://wttr.in"):
+        self._api_key = api_key          # 构造参数：地址子句 ;api_key=... 可注入
+        self._base_url = base_url
+
+    def schema(self) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "查询指定城市的当前天气。城市用中文名或拼音均可。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "city": {"type": "string", "description": "城市名，如 北京 / Shanghai"},
+                    },
+                    "required": ["city"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+    def run(self, args: Dict[str, Any], ctx: Any) -> ToolResult:
+        city = str(args.get("city", "")).strip()
+        if not city:
+            return ToolResult(output="缺少 city 参数", success=False, error="city is required")
+        try:
+            with urlopen(f"{self._base_url}/{city}?format=j1", timeout=10) as resp:
+                data = json.load(resp)
+            cur = data["current_condition"][0]
+            return ToolResult(output=(
+                f"{city} 当前 {cur['temp_C']}°C，"
+                f"体感 {cur['FeelsLikeC']}°C，{cur['weatherDesc'][0]['value']}"
+            ))
+        except Exception as exc:
+            return ToolResult(output=f"查询失败: {exc}", success=False, error=str(exc))
+
+
+def create(**kw):                        # 模块级工厂：地址 "myapp.weather_tool" 自动命中
+    return WeatherTool(**kw)
+```
+
+#### 25.2.3 RunContext：工具能访问什么
+
+`run(args, ctx)` 的 `ctx` 是 `RunContext`（`norpagent.kernel.context`），
+一次任务执行期间的全部环境：
+
+| 字段 | 说明 |
+|---|---|
+| `ctx.registry` | 组件注册表（可解析其他工具 / 模型：`reg.resolve_tool(name)`） |
+| `ctx.session_manager` / `ctx.session_id` | 会话存取（跨轮记忆） |
+| `ctx.sandbox` | 当前任务沙箱（`run_shell` / `run_python`，隔离执行） |
+| `ctx.scheduler` | 任务调度器（提交子任务，多智能体协作入口） |
+| `ctx.ui` | UI 适配器（`ctx.ask_user(...)` 人工交互 / 审批） |
+| `ctx.params` | 预设 params 与任务级参数的合并结果（`max_steps` / `task_timeout` / 自定义键） |
+| `ctx.components` | 预设声明的通用组件实例（`{kind: instance}`） |
+| `ctx.component("context_store")` | 按种类取通用组件（上下文库 / 项目管理等） |
+| `ctx.task_id` / `ctx.preset_name` | 任务元信息 |
+
+```python
+# 工具内使用组件的惯用写法
+store = ctx.component("context_store")     # 无则 None，自行兜底
+if store is not None:
+    store.add(ctx.session_id, chunk, meta={"tool": self.name})
+```
+
+#### 25.2.4 取消协作（长任务必做）
+
+任务可能被 Ctrl+C / `engine.request_stop()` / 超时取消。内置取消信号
+经 contextvars 注入，工具内随时可查（4.6.2 节）：
+
+```python
+from norpagent.loops.cancel import cancel_requested
+
+def run(self, args, ctx):
+    for chunk in self._fetch_stream(args["url"]):
+        if cancel_requested():            # 引擎停止 / 取消 → True
+            return ToolResult(output="任务已取消", success=False)
+        self._write(chunk)
+    return ToolResult(output="done")
+```
+
+不检查取消的长工具会占满守护工作池（4.6.4 节边界），务必在
+**流式 / 循环 / 分片**路径上检查。
+
+#### 25.2.5 注册与接入的四种方式
+
+| 方式 | 写法 | 场景 |
+|---|---|---|
+| 注册表登记 | `reg.register_tool("weather", WeatherTool())` | 程序化装配，其他组件可按名引用 |
+| 实例列表 | `npa(tools=[WeatherTool(), MyTool()])` | 启动即用 |
+| 名字映射 | `npa(tools={"weather": WeatherTool(api_key="x")})` | 启动即用（键 = 工具名） |
+| 地址映射 | `npa(tools={"weather": "myapp.weather_tool:create"})` | 启动即用 + 可热重载 |
+
+`npa(tools=["weather"])` 引用的是**已注册名**；地址映射的值
+`"myapp.weather_tool:create"` 是**模块地址**，装配期解析为工厂并按
+工厂约定调用（3.4 节：`;api_key=xxx` 子句注入工厂 `config`）：
+
+```python
+npa(tools={"weather": "myapp.weather_tool:create;api_key=MY_KEY"})
+# 等价于 WeatherTool(api_key="MY_KEY")
+```
+
+Registry 的注册 API 全集（`norpagent.kernel.registry`）：
+
+| API | 说明 |
+|---|---|
+| `register_tool(name, tool)` / `resolve_tool(name)` / `list_tools()` | 工具 |
+| `register_model(name, provider)` / `resolve_model(name)` | 模型 |
+| `register_session(name, factory)` / `build_session(name)` | 会话（工厂） |
+| `register_sandbox(name, factory)` / `build_sandbox(name)` | 沙箱（工厂） |
+| `register_scheduler(name, factory)` / `build_scheduler(name)` | 调度器（工厂） |
+| `register_ui(name, adapter)` / `resolve_ui(name)` | UI 渲染器 |
+| `register_component(kind, name, factory)` / `build_component(kind, name)` | 通用组件（任意种类） |
+| `register_preset(preset)` / `resolve_preset(name)` | 预设 |
+
+#### 25.2.6 热重载工具：键值对的值必须是有效模块（红线）
+
+工具集是**组件槽位**，`npa.remount(tools=...)` 下一次 `run()` 生效
+（Agent 循环每次 run 重新解析工具 schema）。三种形态都可热重载：
+
+```python
+npa.remount(tools=["echo", "weather"])                    # 已注册名列表
+npa.remount(tools={"weather": WeatherTool(api_key="新key")})  # 实例映射
+npa.remount(tools={"weather": "myapp.weather_tool:create"})   # 地址映射（推荐）
+```
+
+**红线：键值对的值在热重载时必须是有效模块**。tools 映射的
+dict 值、以及任何槽位的 dict 形态值（hooks 映射、自定义槽位 dict
+值，嵌套 dict 递归），其中的字符串若**形如纯地址**（含 `.` 或 `:`
+的点分标识符，`norpagent.arch.address.is_address_like` 判定），
+装配器会按地址解析：
+
+- 值 = **已注册名**（如 `"echo"`）→ 原样保留为名字引用；
+- 值 = **有效模块地址**（如 `"myapp.weather_tool:create"`）→ 加载
+  模块、取属性、按工厂约定调用；
+- 值 = **有效实例 / 工厂对象** → 原样使用；
+- 值 = **形如地址但解析失败**（模块不存在 / 属性不存在 / 语法错误）→
+  抛 `AddressError`（`AddressError(ImportError)`），**热重载失败，
+  不静默回落、不部分生效**。
+
+```python
+# 错误示范：模块名拼错 / 属性不存在 → AddressError，remount 抛错
+npa.remount(tools={"weather": "myapp.weather_toll:create"})   # 拼写错误
+npa.remount(tools={"weather": "myapp.weather_tool:WeatherTool"})  # 类未实例化？→ callable 会按工厂调用（合法）
+npa.remount(tools={"weather": "myapp.not_exist:create"})      # 模块不存在
+
+# 正确示范：三选一
+npa.remount(tools={"weather": "myapp.weather_tool:create"})   # 地址（模块可导入）
+npa.remount(tools={"weather": "weather"})                     # 已注册名（register_tool 过）
+npa.remount(tools={"weather": WeatherTool()})                 # 实例
+```
+
+为什么「写了地址就该报错」：热重载是运维动作，静默回落的地址会
+让线上悄悄用上旧实现或空实现，比显式失败更难排查。因此装配器
+对「形如地址的字符串」一律严格解析（3.3 节第 3 条、`layer.py`
+`_resolve_dict_values` 的注释原文：「写了地址就该明确报错，不静默
+回落」）。**非地址形态的字符串（如 `"high"`、`"./dir"`）不受影响，
+保持字面语义**。
+
+另一个热重载细节：**地址热重载会先失效模块缓存**。`remount` 对
+字符串地址执行 `_invalidate_address_module`——删 `__cached__` 对应
+的 .pyc、弹出 `sys.modules` 条目，下次解析从磁盘重新导入（3.7 节）。
+因此「修改 `myapp/weather_tool.py` → `npa.remount(tools={"weather":
+"myapp.weather_tool:create"})`」即可热更新代码。注意：**实例 / 已注册
+名形态不做模块失效**（没有可失效的地址），改代码后请用地址形态。
+
+调试建议：热重载失败时检查 `eng.layer.describe()` 的装配清单（3.5 节），
+以及 `reg.list_tools()` 确认名字是否真的注册过。
+
+---
+
+### 25.3 模型开发详解
+
+模型是 Agent 的「大脑」。接入任何模型（本地 / 云端 / 私有协议）只需
+实现 `ModelProvider`（`norpagent.protocols.model`）。
+
+#### 25.3.1 协议
+
+```python
+class ModelProvider(Protocol):
+    model_id: str
+    def generate(self, messages, tools, params) -> ModelOutput: ...
+    def stream(self, messages, tools, params) -> Iterator[ModelStreamChunk]: ...  # 可选
+```
+
+- `messages`：`List[ChatMessage]`（role: system / user / assistant /
+  tool；工具轮次带 `tool_calls` / `tool_call_id`）；
+- `tools`：OpenAI function schema 列表（无工具时为 None）；
+- `params`：运行时参数 dict（temperature / max_tokens / top_p /
+  自定义键），实现可自由取用；
+- `ModelOutput`：`content` / `reasoning`（思维链）/ `tool_calls` /
+  `usage`（`ModelUsage`）/ `finish_reason`；
+- `ModelStreamChunk`：流式增量 `delta_content` / `reasoning` /
+  `tool_call_delta` / `usage` / `finish_reason`。
+
+**实现了 `stream` 的内核优先走流式路径**（逐段广播 `on_content`），
+未实现则退回一次性 `generate`。建议两个都实现。
+
+#### 25.3.2 完整示例：HTTP JSON 模型适配器
+
+```python
+# myapp/models/http_json.py —— 任意 HTTP JSON 协议模型
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, Iterator, List, Optional
+from urllib.request import Request, urlopen
+
+from norpagent.protocols.model import (
+    ChatMessage, ModelOutput, ModelProvider, ModelStreamChunk,
+    ModelUsage, ToolCallSpec,
+)
+
+
+class HttpJsonModel:
+    model_id = "http-json"
+
+    def __init__(self, endpoint: str, api_key: str = "", **kw):
+        self._endpoint = endpoint
+        self._api_key = api_key
+
+    def _payload(self, messages, tools, params):
+        body = {
+            "messages": [m.to_openai() for m in messages],
+            "temperature": params.get("temperature", 0.7),
+        }
+        if tools:
+            body["tools"] = tools
+        return body
+
+    def _post(self, body, timeout=60.0):
+        req = Request(self._endpoint, data=json.dumps(body).encode("utf-8"),
+                      headers={"Content-Type": "application/json"})
+        if self._api_key:
+            req.add_header("Authorization", f"Bearer {self._api_key}")
+        with urlopen(req, timeout=timeout) as resp:
+            return json.load(resp)
+
+    def generate(self, messages, tools, params) -> ModelOutput:
+        data = self._post(self._payload(messages, tools, params))
+        msg = data["choices"][0]["message"]
+        tool_calls = None
+        if msg.get("tool_calls"):
+            tool_calls = [
+                ToolCallSpec(id=tc["id"], name=tc["function"]["name"],
+                             arguments=json.loads(tc["function"]["arguments"] or "{}"))
+                for tc in msg["tool_calls"]
+            ]
+        usage = data.get("usage")
+        return ModelOutput(
+            content=msg.get("content") or "",
+            tool_calls=tool_calls,
+            usage=ModelUsage(
+                input_tokens=usage.get("prompt_tokens", 0),
+                output_tokens=usage.get("completion_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+            ) if usage else None,
+            finish_reason=data["choices"][0].get("finish_reason", "stop"),
+        )
+
+    def stream(self, messages, tools, params) -> Iterator[ModelStreamChunk]:
+        # 可选的流式实现；逐 chunk 检查取消事件（见下）
+        from norpagent.loops.cancel import cancel_requested
+        body = self._payload(messages, tools, params)
+        body["stream"] = True
+        with urlopen(Request(self._endpoint,
+                             data=json.dumps(body).encode("utf-8"),
+                             headers={"Content-Type": "application/json"}),
+                     timeout=120.0) as resp:
+            for line in resp:
+                if cancel_requested():           # 引擎停止 / Ctrl+C 尽早退出
+                    return
+                line = line.decode("utf-8").strip()
+                if not line.startswith("data:"):
+                    continue
+                chunk = json.loads(line[5:])
+                delta = chunk["choices"][0].get("delta", {})
+                yield ModelStreamChunk(delta_content=delta.get("content") or "")
+```
+
+#### 25.3.3 注册、凭据回落与热重载
+
+```python
+# 程序化注册
+reg.register_model("my_http", HttpJsonModel(endpoint="http://127.0.0.1:8000/v1"))
+
+# npa() 接入：名字 / 地址 / 实例三选一
+npa(model="my_http")
+npa(model="myapp.models.http_json:create;endpoint=http://127.0.0.1:8000/v1")
+npa(model=HttpJsonModel(endpoint="..."))
+
+# 热重载：换模型 / 换配置 / 换代码（地址形态会失效模块缓存）
+npa.remount(model="myapp.models.http_json:create;endpoint=http://127.0.0.1:9000/v1")
+```
+
+注意事项：
+
+- **凭据回落**：装配层检查不到任何 Key（`OPENAI_API_KEY` /
+  `DEEPSEEK_API_KEY` / `ANTHROPIC_API_KEY` / `DASHSCOPE_API_KEY` /
+  `NORPAGENT_API_KEY`）时自动回落 `mock`（21.1 节）——自定义模型
+  也建议在无凭据时给出可读错误而不是裸抛；
+- **取消**：`params["_cancel_event"]` 是内核注入的取消事件（
+  `call_timeout=0` 时同样注入），流式循环每 chunk 检查（4.6.2）；
+- **DeepSeek V4 特判**：工具轮次 assistant 消息的 `reasoning_content`
+  必须原样回传（即使空串），`ChatMessage.to_openai()` 已处理（21.1）；
+- 模型槽位是**组件槽位**（`name_or_address` 语义），热重载下一次
+  run() 生效。
+
+---
+
+### 25.4 会话开发详解
+
+会话是 Agent 的「记忆」：对话历史的持久化与检索。实现
+`SessionManager`（`norpagent.protocols.session`）即可接入任意后端
+（文件 / 数据库 / 云端同步）。
+
+#### 25.4.1 协议与完整示例
+
+```python
+class SessionManager(Protocol):
+    def create_session(self, title: str = "") -> Session: ...
+    def get_session(self, session_id: str) -> Optional[Session]: ...
+    def append_message(self, session_id: str, message: ChatMessage) -> bool: ...
+    def history(self, session_id: str) -> List[ChatMessage]: ...
+    def list_sessions(self) -> List[Session]: ...
+    def delete_session(self, session_id: str) -> bool: ...
+```
+
+```python
+# myapp/sessions/jsonfile.py —— JSON 文件会话存储
+import json, os, threading, time
+from norpagent.protocols.session import Session, SessionManager
+from norpagent.protocols.model import ChatMessage
+
+
+class JsonFileSessions:
+    """每会话一个 .json 文件。所有方法线程安全（锁保护）。"""
+
+    def __init__(self, root: str = "./sessions", **kw):
+        self._root = root
+        self._lock = threading.RLock()
+        os.makedirs(root, exist_ok=True)
+
+    def _path(self, sid):
+        return os.path.join(self._root, f"{sid}.json")
+
+    def create_session(self, title=""):
+        s = Session(id=f"s{int(time.time() * 1000)}", title=title,
+                    created_at=time.time())
+        with self._lock:
+            with open(self._path(s.id), "w", encoding="utf-8") as f:
+                json.dump({"title": title, "messages": []}, f, ensure_ascii=False)
+        return s
+
+    def get_session(self, session_id):
+        with self._lock:
+            p = self._path(session_id)
+            if not os.path.exists(p):
+                return None
+            data = json.load(open(p, encoding="utf-8"))
+            return Session(id=session_id, title=data.get("title", ""),
+                           created_at=os.path.getmtime(p),
+                           messages=[ChatMessage(**m) for m in data["messages"]])
+
+    def append_message(self, session_id, message):
+        with self._lock:
+            p = self._path(session_id)
+            if not os.path.exists(p):
+                return False
+            data = json.load(open(p, encoding="utf-8"))
+            data["messages"].append({
+                "role": message.role, "content": message.content,
+                "tool_call_id": message.tool_call_id,
+            })
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            return True
+
+    def history(self, session_id):
+        s = self.get_session(session_id)
+        return list(s.messages) if s else []
+
+    def list_sessions(self):
+        with self._lock:
+            return [self.get_session(fn[:-5]) for fn in os.listdir(self._root)
+                    if fn.endswith(".json")]
+
+    def delete_session(self, session_id):
+        with self._lock:
+            p = self._path(session_id)
+            if os.path.exists(p):
+                os.remove(p)
+                return True
+            return False
+
+
+def create(config=None, **kw):       # 模块级工厂
+    root = (config or {}).get("root", "./sessions")
+    return JsonFileSessions(root=root)
+```
+
+#### 25.4.2 注册与热重载语义
+
+```python
+reg.register_session("jsonfile", lambda: JsonFileSessions(root="./sessions"))
+npa(session="jsonfile")                                   # 名字
+npa(session="myapp.sessions.jsonfile:create;root=./data")  # 地址
+npa.remount(session="myapp.sessions.jsonfile:create;root=./data")  # 热重载
+
+# 续聊：跨会话通过 session_id
+r1 = eng.submit("记住：我最喜欢蓝色")
+r2 = eng.submit("我最喜欢什么颜色？", session_id=r1.session_id)
+```
+
+**热重载语义与工具不同**：会话是**装配槽位**，`remount` 走
+「AgentRuntime 热重建」——停旧运行时 → 按当前装配建新运行时 →
+前端重绑渲染器（3.7 节分组表）。重建期间的在途任务存在竞态，
+生产环境请先排水再换（3.7 节「两阶段热挂载」建议）。注意：换会话
+实现时历史不会自动迁移——新旧实现各管各的存储，跨实现续聊需自行
+迁移数据。
+
+---
+
+### 25.5 沙箱开发详解
+
+沙箱是 Agent 的「隔离执行环境」：`exec_cmd` / `run_python` 等工具
+经沙箱协议执行，替换沙箱实现（容器 / 远程 / 虚拟机）**无需修改任何
+工具代码**。
+
+#### 25.5.1 协议
+
+```python
+class Sandbox(Protocol):                       # 一个已创建的沙箱实例
+    def run_shell(self, command, timeout=60.0, cwd=None, env=None) -> SandboxResult: ...
+    def close(self) -> None: ...
+
+class PythonSandbox(Protocol):                 # 可选能力：隔离执行 Python
+    def run_python(self, code, tool_dispatch, timeout=60.0) -> SandboxResult: ...
+
+class SandboxProvider(Protocol):               # 提供者：按需创建沙箱实例
+    kind: str
+    def create(self) -> Sandbox: ...
+
+class SandboxResult:                           # 执行结果
+    stdout: str; stderr: str; exit_code: int; timed_out: bool
+    # ok = exit_code == 0 and not timed_out
+```
+
+#### 25.5.2 完整示例：Docker 沙箱
+
+```python
+# myapp/sandboxes/docker_sb.py —— Docker 容器沙箱（示意）
+import subprocess
+from norpagent.protocols.sandbox import Sandbox, SandboxProvider, SandboxResult
+
+
+class DockerSandbox:
+    def __init__(self, image: str = "python:3.11-slim", **kw):
+        self._image = image
+
+    def run_shell(self, command, timeout=60.0, cwd=None, env=None):
+        try:
+            proc = subprocess.run(
+                ["docker", "run", "--rm", "-i", self._image, "sh", "-c", command],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            return SandboxResult(stdout=proc.stdout, stderr=proc.stderr,
+                                 exit_code=proc.returncode)
+        except subprocess.TimeoutExpired:
+            return SandboxResult(stderr="timeout", exit_code=-1, timed_out=True)
+        except FileNotFoundError:
+            return SandboxResult(stderr="docker not found", exit_code=-1)
+
+    def close(self):
+        pass                                        # docker run --rm 自动清理
+
+
+class DockerSandboxProvider:
+    kind = "docker"
+
+    def __init__(self, image="python:3.11-slim", **kw):
+        self._image = image
+
+    def create(self):
+        return DockerSandbox(image=self._image)
+
+
+def create(config=None, **kw):
+    return DockerSandboxProvider(image=(config or {}).get("image", "python:3.11-slim"))
+```
+
+```python
+reg.register_sandbox("docker", lambda: DockerSandboxProvider(image="python:3.11"))
+npa(sandbox="docker")
+npa(sandbox="myapp.sandboxes.docker_sb:create;image=python:3.12-slim")
+npa.remount(sandbox="myapp.sandboxes.docker_sb:create;image=python:3.12-slim")
+```
+
+开发要点：
+
+- **超时与取消**：`run_shell` 的 `timeout` 必须兑现（`subprocess.run`
+  的 timeout 即可）；引擎停止时取消事件置位（4.6.2），长任务建议
+  分片检查（内置 pooled 沙箱每 ≤0.5s 检查一次并强杀进程树）；
+- **进程树清理**：`sh -c` 的子进程树要随超时一起杀（Windows 用
+  `taskkill /T`，见 21.4）；
+- **close 必须幂等**：沙箱可能被 `shutdown` / 热重建 / 任务结束
+  多处 close。
+
+---
+
+### 25.6 调度器开发详解
+
+调度器是 Agent 的「编排」：任务入队、执行顺序、并发策略。
+`task_submit` / `task_list` 等工具与多智能体编排都建立在它之上。
+
+#### 25.6.1 协议与完整示例
+
+```python
+class TaskScheduler(Protocol):
+    def submit(self, task: AgentTask) -> str: ...           # 入队，返回任务 id
+    def pending(self) -> int: ...                           # 待办数
+    def drain(self, run_task) -> List[TaskResult]: ...      # 依序执行全部待办
+```
+
+```python
+# myapp/schedulers/priority.py —— 优先级调度器（数值越小越先执行）
+import heapq
+from norpagent.protocols.scheduler import AgentTask, TaskScheduler
+
+
+class PriorityScheduler:
+    def __init__(self, **kw):
+        self._heap = []                       # [(priority, seq, task)]
+
+    def submit(self, task):
+        priority = int(task.params.get("priority", 0))   # 任务参数里带优先级
+        heapq.heappush(self._heap, (priority, id(task), task))
+        return task.id
+
+    def pending(self):
+        return len(self._heap)
+
+    def drain(self, run_task):
+        results = []
+        while self._heap:
+            _p, _seq, task = heapq.heappop(self._heap)
+            results.append(run_task(task))    # run_task 由运行时注入
+        return results
+
+
+def create(**kw):
+    return PriorityScheduler()
+```
+
+```python
+reg.register_scheduler("priority", lambda: PriorityScheduler())
+npa(scheduler="priority")
+npa.remount(scheduler="myapp.schedulers.priority:create")
+```
+
+要点：`drain` 的 `run_task` 回调由运行时注入（把 Agent 循环与调度器
+解耦，未来多智能体时回调可指向不同 Agent）；`persistent` 内置实现
+（21.5）在崩溃后 `resume()` 续跑，自研调度器可参照。
+
+---
+
+### 25.7 前端与渲染器开发详解
+
+前端是两层结构（5.1 节）：**frontend**（输入输出外壳，Frontend
+协议）+ **ui**（事件渲染器，UIAdapter 协议）。
+
+#### 25.7.1 协议
+
+```python
+class Frontend(Protocol):              # 用户交互外壳
+    frontend_id: str
+    def attach(self, engine) -> None: ...   # 绑定引擎：engine.submit / request_stop
+    def start(self) -> None: ...            # 启动（通常自建后台线程）
+    def stop(self) -> None: ...             # 停止（线程安全）
+    def is_alive(self) -> bool: ...
+
+class UIAdapter(Protocol):             # 事件渲染器
+    ui_id: str
+    def on_event(self, event) -> None: ...  # 渲染一个 AgentEvent
+    def ask_user(self, question, default="") -> str: ...
+    def notify(self, message, level="info") -> None: ...
+```
+
+#### 25.7.2 完整示例：托盘通知前端（简版）
+
+```python
+# myapp/frontends/toast.py —— 无输入、仅通知的前端（适合桌面辅助）
+import threading
+from norpagent.frontends.base import Frontend
+
+
+class ToastFrontend:
+    frontend_id = "toast"
+
+    def __init__(self, **kw):
+        self._engine = None
+        self._stop = threading.Event()
+
+    def attach(self, engine):
+        self._engine = engine
+        # 订阅事件总线：只关心最终结果
+        engine.registry.bus.subscribe("on_task_done", self._on_done)
+
+    def _on_done(self, event):
+        result = event.get("result")
+        if result is not None:
+            print(f"[通知] 任务完成: {result.final_content[:80]}")
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        while not self._stop.wait(0.2):
+            pass
+
+    def stop(self):
+        self._stop.set()
+
+    def is_alive(self):
+        return not self._stop.is_set()
+
+
+def create(**kw):
+    return ToastFrontend()
+```
+
+```python
+npa(frontend="myapp.frontends.toast:create")
+# 或运行时热替换（基础设施槽位：停旧启新，失败自动回滚旧实现）
+npa.remount(frontend="myapp.frontends.toast:create")
+```
+
+要点：前端**不直接渲染**——渲染交给 ui 渲染器（`npa(ui=...)`），
+前端负责「读输入 → submit、接事件 → 交渲染器」。内置 Web 前端与
+WebUI 渲染器是参考实现（第 22 章）。
+
+---
+
+### 25.8 事件循环开发详解
+
+事件循环决定任务的调度方式：线程模型、中断方式、唤醒方式。默认
+`NasyncioLoopRuntime` 已满足绝大多数场景；特殊场景（嵌入式、测试、
+自研调度）可实现 `LoopRuntime` 协议替换（4.2 节）。
+
+```python
+class LoopRuntime(Protocol):
+    name: str
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def is_running(self) -> bool: ...
+    def join(self, timeout=None) -> None: ...
+    def submit(self, fn, *args, **kwargs) -> Any: ...   # 循环上下文执行并阻塞返回
+```
+
+```python
+# myapp/loops/sync_loop.py —— 同步直跑循环（测试 / 嵌入式）
+class SyncLoop:
+    name = "sync"
+
+    def __init__(self, **kw):
+        self._running = False
+
+    def start(self):
+        self._running = True
+
+    def stop(self):
+        self._running = False
+
+    def is_running(self):
+        return self._running
+
+    def join(self, timeout=None):
+        pass
+
+    def submit(self, fn, *args, **kwargs):
+        return fn(*args, **kwargs)          # 同步直接执行
+
+
+def create(**kw):
+    return SyncLoop()
+```
+
+```python
+npa(async_loop="myapp.loops.sync_loop")          # 地址（自动命中模块级 create）
+npa(async_loop=SyncLoop())                        # 实例
+npa.remount(async_loop="myapp.loops.sync_loop")   # 热重载（停旧启新）
+```
+
+开发要点（来自 4.5 / 4.6 的工程教训）：
+
+- `submit` 是**阻塞式**契约：引擎在调用线程等待结果，实现必须兑现；
+- 长任务放**守护线程池**而非循环线程（循环线程卡死 = 全部调度瘫痪）；
+- 实现取消信号（`cancel_requested` 可查）与 Ctrl+C 轮询等待
+  （主线程不在循环入口，见 4.6.1）；
+- 替换循环时在途任务会被放弃（3.7 分组表），建议无任务时替换。
+
+---
+
+### 25.9 通用组件开发详解
+
+「附加能力」类模块（上下文库、项目管理、任务存储、向量库……）不走
+专用槽位，走**开放组件命名空间**（2.6.3）：`kind` 是种类（可任意
+新增），`name` 是组件名，`factory` 是工厂。
+
+#### 25.9.1 注册与使用
+
+```python
+# myapp/components/redis_store.py —— 示例：Redis 上下文存储
+class RedisContextStore:
+    def __init__(self, host="127.0.0.1", port=6379, **kw):
+        self._host, self._port = host, port
+
+    def add(self, session_id, text, meta=None):
+        ...                                            # 实现 add / search / list / delete
+
+    def search(self, query, limit=10):
+        ...
+
+    def close(self):
+        ...
+
+
+def create(config=None, **kw):
+    return RedisContextStore(host=(config or {}).get("host", "127.0.0.1"))
+```
+
+```python
+# 注册（种类 context_store 已有内置 fts5，新增 redis 实现）
+reg.register_component("context_store", "redis",
+                       lambda: RedisContextStore(host="127.0.0.1"))
+
+# npa() 接入（context_store 槽位：address / name_or_address 语义）
+npa(context_store="redis")
+npa(context_store="myapp.components.redis_store:create;host=10.0.0.5")
+
+# 自定义新种类：任意 kind 都可注册，预设里声明引用
+reg.register_component("vector_store", "pg", lambda: PgVectorStore())
+Preset(name="mine", components={"context_store": "redis",
+                                "vector_store": "pg"})
+```
+
+工具侧取用：
+
+```python
+store = ctx.component("vector_store")          # 按种类取，无则 None
+```
+
+#### 25.9.2 热重载与工厂注入
+
+- `context_store` / `project_manager` 是**装配槽位**：`remount` 热
+  重建 AgentRuntime（3.7 分组表）；
+- 工厂声明 `workspace_root` 参数（或 **kwargs）时自动注入工作区根
+  （2.6.3）；
+- 自定义槽位也可登记通用组件（3.8 节的 `vector_store` 槽位示例，
+  25.10.4 有完整版）。
+
+---
+
+### 25.10 槽位开发详解（重点）
+
+25.2 ~ 25.9 开发的是「槽位的实现」；本节开发**槽位本身**——注册
+一个全新的槽位名，让它获得与内置 18 槽位完全相同的完整管线
+（`npa()` 参数校验、ArchLayer 装配、`npa.remount()` 热替换、
+`layer.describe()` 清单）。3.8 节给出契约速览，本节给出开发全流程。
+
+#### 25.10.1 槽位的本质
+
+一个槽位 = **名字 + 字符串语义 + 应用逻辑（applier）**：
+
+- `name`：槽位名，即 `npa()` 的关键字参数名（必须是合法 Python 标识符）；
+- `string_semantics`：字符串值怎么解释——`address`（模块地址）/
+  `name`（注册表组件名）/ `name_or_address`（先名后址）/ `literal`
+  （字面值，地址优先）（3.3 节）；
+- `applier(reg, layer, value, params, ctx)`：槽位值非空时由装配器
+  调用，把值「应用」到系统上（注册组件 / 订阅钩子 / 写 extras）。
+
+#### 25.10.2 SlotSpec 字段全解
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `name` | str | 槽位名（必填） |
+| `description` | str | 描述（`layer.describe()` 清单可见） |
+| `protocol` | str | 协议说明（人类可读） |
+| `default_address` | Optional[str] | 默认实现地址（不填槽位时使用） |
+| `string_semantics` | str | `address` / `name` / `name_or_address` / `literal` |
+| `factory_kwargs` | Dict[str, str] | 工厂附加键（注入调用上下文） |
+| `examples` | List[str] | 示例（文档 / 提示用） |
+| `defer_factory` | bool | 工厂推迟到引擎装配期调用（agent_runtime 用） |
+| `applier` | callable | 应用逻辑（槽位值非空时调用） |
+| `remount_rebuild_agent` | bool | 热替换后是否热重建 AgentRuntime |
+
+#### 25.10.3 applier 契约与重入安全
+
+```python
+def applier(reg, layer, value, params, ctx): ...
+```
+
+- `value`：解析后的槽位值——`address` 语义为已实例化实现
+  （`;key=value` 子配置经 `layer.subconfig(slot)` 取得），
+  `name` / `name_or_address` / `literal` 语义为原值；
+- `ctx` 提供四个可变容器：
+  - `ctx["components"]`：最终预设组件声明 `{kind: name}`（登记通用
+    组件用，AgentRuntime 据此构建 `ctx.components`）；
+  - `ctx["extras"]`：引擎附加对象（`engine.extras[槽位名]` 消费）；
+  - `ctx["overrides"]`：预设字段覆盖（可改写 preset 的字段）；
+  - `ctx["meta"]`：注册表架构元数据，记录挂上去的**可退订对象**
+    （热重载时据此清理）；
+- **重入安全是硬要求**：同一注册表会重复调用 applier（装配 + 每次
+  `npa.remount`），重复执行不得叠加副作用——订阅事件总线的对象先按
+  `ctx["meta"]` 记录退订再重挂（内置 hooks / security / plugins
+  槽位是参考实现）；
+- `remount_rebuild_agent=True`：applier 向预设 `components` 登记
+  通用组件的「装配型」槽位应置 True（热替换后热重建，立即生效）。
+
+#### 25.10.4 完整示例：开发一个「向量检索」槽位
+
+目标：新增 `vector_store` 槽位——传入任意向量库实现（实例 / 工厂 /
+模块地址），注册为 `vector_store` 种类通用组件，工具经
+`ctx.component("vector_store")` 取用；热替换后立即生效。
+
+```python
+# myapp/slots/vector_store.py
+from norpagent.arch import SlotSpec, register_slot
+
+
+def _apply_vector_store(reg, layer, value, params, ctx):
+    # 1. 解析出的 value 就是实现（实例 / 工厂 / 模块对象）
+    #    ——地址形态由架构层在调用 applier 前解析并实例化
+    factory = value if callable(value) else (lambda v=value: v)
+    # 2. 注册为通用组件（名字固定，覆盖语义）
+    reg.register_component("vector_store", "_arch_vector", factory)
+    # 3. 写入预设组件声明 → AgentRuntime 构建 ctx.components
+    ctx["components"]["vector_store"] = "_arch_vector"
+    # 4. 写入 extras（引擎侧可直接访问 engine.extras["vector_store"]）
+    ctx["extras"]["vector_store"] = value
+
+
+register_slot(SlotSpec(
+    name="vector_store",
+    description="向量检索组件（自定义装配槽位示例）",
+    protocol="任意向量库实现（注册为 vector_store 通用组件）",
+    string_semantics="literal",        # 值原样传入 applier（含地址解析）
+    applier=_apply_vector_store,
+    remount_rebuild_agent=True,        # 热替换后热重建，组件立即生效
+))
+```
+
+使用（与内置槽位体验完全一致）：
+
+```python
+import norpagent as npa
+
+npa(vector_store=MyVectorStore())                     # 实例
+npa(vector_store="myapp.vector:create;index=./idx")   # 地址 + 子句（literal 地址优先语义）
+npa.remount(vector_store=OtherStore())                # 热替换：AgentRuntime 热重建
+print(npa.current().engine.extras["vector_store"])    # extras 消费
+# 工具内：ctx.component("vector_store") 取用
+```
+
+`string_semantics="literal"` 的「地址优先」语义（3.3 节第 2 条）：
+字符串**形如纯地址**（含 `.` / `:` 的点分标识符）即按地址加载
+（解析失败抛 `AddressError`），其余保持字面值——所以上面的
+`"myapp.vector:create;index=./idx"` 会被解析并实例化后传给 applier。
+
+#### 25.10.5 热重载红线：键值对的值必须是有效模块（重点）
+
+**这是槽位开发与热重载最重要的一条规则**，与 25.2.6 的工具映射
+红线同源，但适用范围更广：
+
+> 任何槽位值中的 **dict 键值对**（tools 映射 / hooks 映射 / 自定义
+> 槽位的 dict 值，**嵌套 dict 递归**），值若是**形如纯地址的字符串**
+> （`is_address_like`：含 `.` 或 `:` 的点分标识符），装配器就会按
+> **模块地址**解析——热重载（`npa.remount`）与启动装配（`npa()`）
+> 一视同仁。**解析失败抛 `AddressError`，热重载失败，绝不静默回落。**
+
+键值对的值必须是以下三种「有效模块」之一：
+
+| 值形态 | 例子 | 结果 |
+|---|---|---|
+| 已注册名（name 语义槽位） | `tools={"a": "echo"}` | 名字引用 |
+| 有效模块地址（可导入 + 属性存在） | `tools={"a": "myapp.tools:create"}` | 加载并实例化（工厂约定） |
+| 有效实例 / 工厂对象 | `tools={"a": MyTool()}` | 原样使用 |
+| 形如地址但无效（拼写错 / 模块不存在 / 属性不存在） | `tools={"a": "myapp.tolls:create"}` | **AddressError，失败** |
+
+为什么必须严格：热重载是线上运维动作。地址写错却静默回落，线上会
+悄悄使用旧实现 / 空实现，比显式失败更难排查——所以「写了地址就该
+明确报错」。实现位于 `norpagent/arch/layer.py` 的
+`_resolve_dict_values`（dict 值统一处理、嵌套递归、解析失败即抛）。
+
+```python
+# 自定义槽位 dict 值：热重载时同样严格
+npa.remount(vector_store={"embedder": "myapp.embed:create",   # 有效地址 → 解析
+                         "index": "./idx"})                   # 非地址 → 字面值
+npa.remount(vector_store={"embedder": "myapp.embd:create"})    # 拼错 → AddressError
+```
+
+例外与边界：
+
+- **hooks 槽位例外**：hooks 映射的值是「回调本身」，地址指向的回调
+  函数**原样保留不调用**（3.3 节第 3 条）——但地址仍必须能解析
+  （模块 / 属性存在），否则同样抛错；
+- **list 元素不解析**：列表保持字面语义（如 `plugins=["./dir"]` 的
+  目录路径；tools 列表元素由装配器按「名字或地址」特判，见 3.3 节
+  第 4 条）；
+- **非地址字符串不受影响**：`"high"`、`"./data"`、`"sqlite"` 等不含
+  点分标识符的字符串保持字面 / 名字语义。
+
+**热重载前会失效模块缓存**：`remount` 对字符串地址先删 .pyc、弹出
+`sys.modules`，再重新导入（3.7 节）。改代码 → remount 即生效；
+实例形态不做缓存失效。排查热重载失败用 `layer.describe()` 看装配
+清单、`AddressError` 的 traceback 定位地址。
+
+---
+
+### 25.11 插件开发详解（重点）
+
+插件 = 一组工具 + 一组生命周期钩子 + 元数据，以独立 `.py` 文件
+（或 manifest 包）分发。宿主加载时自动获得签名校验 / AST 审计 /
+导入限制 / 网络策略 / 人工审批全套安全防护（第 11 章）。本节给
+插件作者完整的开发示例。配套独立文档：
+`norpagent插件开发指南.md`。
+
+#### 25.11.1 单文件插件完整示例
+
+```python
+# my_plugins/weather_plugin.py —— 完整插件：工具 + 钩子 + 审批提示
+PLUGIN_NAME = "天气插件"
+PLUGIN_VERSION = "1.0.0"
+PLUGIN_PUBLISHER = "xingluosama121"
+PLUGIN_DESCRIPTION = "查询城市天气；任务开始时问候。"
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "weather",
+            "description": "查询指定城市的当前天气。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string", "description": "城市名"},
+                },
+                "required": ["city"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+# 审批提示：weather 免审批（只读），其他未声明工具走宿主总开关
+APPROVAL_HINTS = {
+    "weather": {"approval": "none", "risk": "L0"},
+}
+
+
+def execute(tool_name, args, ctx):
+    """工具统一入口：处理返回 str / None，不处理返回 None。"""
+    if tool_name == "weather":
+        city = args.get("city") or "北京"
+        return f"{city} 今日晴，25°C"          # 示例实现，可替换为真实 API
+    return None
+
+
+# 生命周期钩子（15 个之一，与旧应用 hook 名对齐；签名：业务参数在前，ctx 最后）
+def on_task_start(prompt, ctx):
+    print(f"[插件] 新任务: {prompt[:50]}")
+
+
+def before_tool_call(tool_name, args, ctx):
+    """可变钩子：返回 dict 可改写参数（11.5 节）。"""
+    if tool_name == "weather" and "city" not in args:
+        args = dict(args)
+        args["city"] = "北京"                  # 缺省城市兜底
+    return args
+```
+
+加载（宿主侧）：
+
+```python
+from norpagent.plugins import install_plugin_dirs
+loader = install_plugin_dirs(reg, ["./my_plugins"], config={})
+for info in loader.plugins:
+    print(info.name, info.enabled, info.error or "ok")
+
+# npa() 槽位一键加载
+npa(plugins=["./my_plugins"])
+```
+
+#### 25.11.2 manifest 包格式
+
+目录分发形式：`my_pkg/` 下 `manifest.json` + 入口模块（默认
+`plugin.py`）：
+
+```json
+{
+  "name": "my_pkg",
+  "version": "1.0.0",
+  "publisher": "xingluosama121",
+  "description": "包式插件",
+  "entry": "plugin.py",
+  "isolation": "process",
+  "permissions": [],
+  "signature": ""
+}
+```
+
+与单文件插件唯一的差别是入口模块里放同样的模块级接口
+（`PLUGIN_NAME` / `TOOLS` / `execute` / 钩子……）。
+
+#### 25.11.3 生命周期钩子（15 个）
+
+插件模块级可定义以下钩子函数（签名约定：**业务参数在前，
+PluginContext 在最后**，`ctx` 提供 `plugin_name` / `project_root` /
+`app_dir` / `config` / `current_step`）：
+
+| 钩子 | 时机 | 可变 |
+|---|---|---|
+| `on_task_start(prompt, ctx)` | 任务开始 | 否 |
+| `on_task_done(result, ctx)` | 任务结束 | 否 |
+| `before_step(step, ctx)` | 每步开始 | 是（返回值透传内核） |
+| `after_step(step, result, ctx)` | 每步结束 | 是 |
+| `before_model_call(messages, ctx)` | 模型调用前 | 是 |
+| `after_model_call(output, ctx)` | 模型调用后 | 是 |
+| `before_tool_call(tool_name, args, ctx)` | 工具执行前 | 是（可改写 args） |
+| `after_tool_call(tool_name, result, ctx)` | 工具执行后 | 是 |
+| `on_content(content, ctx)` | 流式输出增量 | 否 |
+| `on_error(error, ctx)` | 出错 | 否 |
+| …… | （共 15 个，11.5 节 / 附录 E） | |
+
+#### 25.11.4 隔离、签名与发布
+
+- **进程级隔离**：模块头声明 `ISOLATION = "process"`，插件代码只在
+  宿主子进程加载执行，工具经 RPC 回传、钩子限时转发（11.7）——
+  插件崩溃不拖死主进程；
+- **签名**（11.8）：`python -m norpagent plugin-sign --gen` 生成密钥
+  对；`plugin-sign my_plugin.py --key <私钥hex>` 生成签名（写入文件
+  头部）；宿主把公钥加入 `plugin_trusted_keys` 后该插件受信任，
+  审计放宽为 warn；
+- **发布**：单文件插件分发 `.py` 即可；包插件压缩目录分发。
+
+#### 25.11.5 调试与热重载
+
+```python
+# 开发期：库化门面
+from norpagent.plugins import PluginSystem
+ps = PluginSystem(reg, ["./my_plugins"], config={"plugin_isolation": "inproc"})
+infos = ps.load()
+ps.status()                 # 插件清单 + 隔离宿主状态
+ps.reload("weather_plugin")  # 开发期热重载单个插件
+ps.shutdown()               # 释放隔离宿主
+
+# 运行中整体替换（框架先退订旧订阅再重装，防叠加）
+npa.remount(plugins=["./my_plugins_v2"])
+
+# 排查：看 PluginInfo
+for info in ps.loader.plugins:
+    if not info.enabled:
+        print(info.name, info.error, info.audit_issues)
+```
+
+调试提示：`plugin_security_audit: "warn"` 只告警不拦截；
+`plugin_isolation: "inproc"` 进程内直跑便于断点调试；上线前切回
+`auto`（AST 静态读取 `ISOLATION`，进程隔离时**不执行插件代码**）。
+
+---
+
+### 25.12 开发检查清单
+
+新模块交付前逐项自检（对应本章各节）：
+
+| # | 检查项 | 章节 |
+|---|---|---|
+| 1 | 实现了完整协议（不依赖具体实现类，只依赖 protocols） | 25.1.4 |
+| 2 | 工厂支持签名裁剪注入（`layer` / `slot` / `config` / `workspace_root`） | 3.4 |
+| 3 | 注册进 Registry（`register_*` 或 `register_component`），名字不与内置冲突 | 25.2.5 |
+| 4 | 至少一种接入方式验证通过（名字 / 地址 / 实例），地址形态可热重载 | 25.2.5 |
+| 5 | **热重载验证**：dict 键值对的值是有效模块（已注册名 / 可解析地址 / 实例）；地址拼写错误时抛 `AddressError` 而非静默回落 | 25.2.6 / 25.10.5 |
+| 6 | 改实现代码 → remount → 新代码生效（地址形态模块缓存失效） | 3.7 |
+| 7 | 长任务 / 流式路径检查取消信号（`cancel_requested`） | 25.2.4 |
+| 8 | 超时兑现：沙箱 `timeout`、模型 `call_timeout`、网络超时 | 25.5.2 |
+| 9 | 线程安全：并发任务共享实例时用锁 / 不可变数据 | 25.4.1 |
+| 10 | `close()` 幂等，可被 shutdown / 热重建 / 任务结束多处调用 | 25.5.2 |
+| 11 | 异常不外泄：工具返回 `ToolResult(success=False)`，模型适配器捕获网络异常 | 25.2.1 |
+| 12 | 装配清单可观测：`layer.describe()` 能显示你的实现 | 3.5 |
+| 13 | 不反向依赖上层（依赖方向单向下行） | 2.6.1 |
+| 14 | 文档与示例（SlotSpec.examples / 模块 docstring） | 25.10.2 |
+
+完成这 14 项，你的模块就与内置组件完全同等地位：可装配、可热重载、
+可审计、可替换。
+
+---
+
+## 第 26 章　注册流程详解
+
+第 25 章讲「如何开发模块、槽位、插件与工具」；本章把「注册」这件事
+本身讲透：**注册表（Registry）**、**槽位表（SLOT_SPECS）** 与
+**地址解析器（address）** 三者如何协作，一个组件从「注册」到「被
+Agent 实际使用」经历了哪些环节，以及注册的三种时机、四种形态与
+校验错误处理。读完本章，你应该能回答三个问题：
+
+1. 组件注册到哪个容器里？（注册表的 9 大命名空间）
+2. 注册后框架怎么找到它？（名字 / 地址 / 实例三种定位）
+3. 从 npa() 按下到工具被调用，中间发生了什么？（装配流水线）
+
+### 26.1 注册体系全景：三个概念的职责边界
+
+注册不是单一动作，而是三个既有机制协作的结果：
+
+| 机制 | 所在模块 | 职责 | 典型 API |
+|---|---|---|---|
+| 注册表 Registry | `norpagent.kernel.registry` | **存**「名字 → 实现」的容器；内核一部分，不感知任何具体实现 | `register_*` / `resolve_*` / `build_*` / `list_*` |
+| 槽位表 SLOT_SPECS | `norpagent.arch.slots` | **描述**「有哪些可填的插口」：18 个内置槽位 + 运行时 `register_slot` 热插拔 | `get_slot` / `snapshot_slots` / `register_slot` |
+| 地址解析器 | `norpagent.arch.address` | **定位**：把字符串地址（`pkg.mod[:attr]`）变成对象 | `resolve_address` / `is_address_like` |
+| 装配器 | `norpagent.runtime.mount` | **安装**：把槽位值翻译成注册表条目与预设覆盖 | `build_registry` / `apply_slot_overrides` |
+
+一句话区分三者：**槽位是插口（填什么），注册表是名字空间（存什么），
+地址是定位方式（怎么找到）**。装配器负责把三者串起来。
+
+- 槽位值填**已注册名**（如 `"sqlite"`）→ 装配器查注册表，把名字
+  写进最终预设；
+- 槽位值填**地址**（如 `"myapp.session:create"`）→ 装配器先解析
+  地址拿到工厂，再注册为内部名（`_arch_session`）并写进最终预设；
+- 槽位值填**实例 / 工厂** → 同样注册为内部名后引用。
+
+### 26.2 注册表 Registry：9 大命名空间
+
+`Registry`（`norpagent.kernel.registry`）持有 9 个独立命名空间，
+每个都是一张「名字 → 实现」的 dict：
+
+| 命名空间 | 注册 API | 解析 / 构建 API | 存储内容 |
+|---|---|---|---|
+| 模型 models | `register_model(name, provider)` | `resolve_model(name)` | 模型提供者实例 |
+| 工具 tools | `register_tool(name, tool)` | `resolve_tool(name)` | Tool 实例 |
+| 会话 sessions | `register_session(name, factory)` | `build_session(name)` | 工厂（每次新建实例） |
+| 沙箱 sandboxes | `register_sandbox(name, factory)` | `build_sandbox(name)` | 工厂（每次新建实例） |
+| 调度器 schedulers | `register_scheduler(name, factory)` | `build_scheduler(name)` | 工厂（每次新建实例） |
+| UI 渲染器 uis | `register_ui(name, adapter)` | `resolve_ui(name)` | UIAdapter 实例 |
+| 插件 plugins | `register_plugin(plugin)` | `unregister_plugin(name)` | Plugin 对象（含工具 + 钩子） |
+| 预设 presets | `register_preset(preset)` | `resolve_preset(name)` | Preset 实例 |
+| 通用组件 components | `register_component(kind, name, factory)` | `build_component(kind, name, workspace_root=...)` | 任意种类：`kind → {name: factory}` |
+
+要点：
+
+- **`resolve_*` 与 `build_*` 的区别**：`resolve_*` 原样返回注册时
+  存入的对象；`build_*` 调用工厂**每次新建实例**——会话、沙箱、
+  调度器是按需构建的（每次任务可能各自独立），模型、工具、UI 是
+  共享的（同一实例全局复用）。因此注册会话 / 沙箱 / 调度器时传的
+  必须是**工厂**（函数或类），注册模型 / 工具 / UI 时传的是**实例**。
+- **名字覆盖语义**：dict 赋值，后注册者覆盖先注册者，不报错。
+  插件注册工具时若与既有工具重名，打印
+  `[Registry] 工具 xxx 已存在，被插件 xxx 覆盖` 日志后覆盖。
+- **线程安全**：内部 RLock 保护，任意线程可随时注册 / 解析。
+- **通用组件是开放命名空间**：`kind` 不限于框架内置
+  （`context_store` / `project_manager` 等），第三方可注册任意新
+  种类（如 `vector_store`），框架无需改内核即可扩展（25.9.1）。
+- `register_plugin` 是复合注册：插件的工具逐个进工具表、钩子逐条
+  订阅事件总线、插件对象进插件表；`unregister_plugin` 退订钩子、
+  移除插件记录（工具条目按名字覆盖语义保留，不在预设工具集内即
+  不可达）。
+
+### 26.3 注册的四种形态与字符串语义
+
+一个组件从开发者手里到注册表，有四种「形态」：
+
+| 形态 | 写法 | 说明 |
+|---|---|---|
+| 实例 | `npa(tools=[MyTool()])` | 直接可用；装配器包装为返回同一实例的工厂注册 |
+| 工厂函数 / 类 | `npa(model="myapp.model:create")` 解析出 callable | 按签名裁剪注入上下文（`layer` / `slot` / `config` / `workspace_root`，3.4 节） |
+| 已注册名引用 | `npa(model="openai_compat")` | 字符串先查注册表，查到即名字引用 |
+| 地址字符串 | `npa(model="myapp.model:create")` | 字符串查不到名字 → 按地址解析 |
+
+字符串进槽位后按该槽位的**字符串语义**解释（`SlotSpec.string_semantics`，
+四选一）：
+
+| 语义 | 解释 | 槽位举例 |
+|---|---|---|
+| `address` | 字符串 = 模块地址（`pkg.mod[:attr]`），必须可解析 | `async_loop` / `frontend` / `context_store` / `project_manager` |
+| `name` | 字符串 = 注册表组件名，原样透传 | `tools` |
+| `name_or_address` | 先按注册表名、查不到再按地址解析 | `model` / `session` / `sandbox` / `scheduler` / `ui` / `preset` |
+| `literal` | 字符串 = 字面值（级别 / 路径 / 目录）；v0.9.1 起形如纯地址（含 `.` 或 `:` 的点分标识符）的字符串按地址加载 | `hooks` / `security` / `plugins` / `logger` / `storage` / `error_handler` |
+
+v0.9.1 起全部槽位的 **dict 键值对**统一支持地址解析
+（`layer.py` 的 `_resolve_dict_values`，递归处理嵌套 dict）：
+
+- 值形如纯地址 → 按地址解析为对象；解析失败抛 `AddressError`，
+  **不静默回落**（红线，见 25.2.6）；
+- 解析出 callable → 按工厂约定调用（`hooks` 槽位除外：值是回调
+  本身，原样保留不调用）；
+- 非字符串值原样保留。
+
+地址本身支持**附加配置子句**：`"pkg.mod:create;port=9000;theme=dark"`
+——分号后的 `键=值` 对被解析为字典注入工厂的 `config` 参数
+（3.3 节 / 3.4 节）。
+
+### 26.4 一次注册到装配的全链路（npa() 启动）
+
+以 `npa(model="myapp.model:create", tools={"weather": "myapp.weather_tool:create"})`
+为例，逐步跟踪从启动到工具被调用的完整链路：
+
+```
+npa(...) 启动
+│
+├─ 1. launch() 参数拆分（runtime/__init__.py）
+│     按「实时槽位表快照」拆分：
+│     - 槽位键（model / tools / ...）→ slot_values
+│     - 其余键（max_steps / workspace_root / ...）→ 运行时参数 params
+│
+├─ 2. ArchLayer(config, **slot_values) + mount_defaults(layer)
+│     登记内置默认实现工厂（async_loop / frontend / agent_runtime）
+│
+├─ 3. layer.connect()（幂等，逐槽位解析）
+│     - model（name_or_address）：字符串先不动，透传给装配器判定
+│     - tools（dict）：_resolve_dict_values 递归解析键值对——
+│       值 "myapp.weather_tool:create" 形如地址 → resolve_address
+│       导入 myapp.weather_tool 模块 → 取 create 属性（callable）
+│       → call_factory 按签名调用 → WeatherTool 实例
+│
+├─ 4. build_registry(layer, params)（runtime/mount.py）
+│     a. Registry() 新建空注册表
+│     b. install_defaults(reg)    内置组件入表（模型 openai_compat /
+│        anthropic / mock；21 个内置工具；会话 sqlite / memory；
+│        沙箱 pooled / subprocess；调度器 persistent 等）
+│     c. register_all_presets(reg) 六种内置预设入表（standard 等）
+│     d. apply_slot_overrides(reg, layer, params) 按固定顺序装配：
+│        ├─ preset 槽位 → 基线预设（默认 standard）
+│        ├─ model：地址解析 → register_model("_arch_model", 工厂)
+│        │    → overrides["model"] = "_arch_model"
+│        ├─ tools：dict → 逐个 register_tool("weather", 实例)
+│        │    → overrides["tools"] = ["weather"]（只启用你声明的）
+│        ├─ session / sandbox / scheduler：注册为 _arch_xxx 或引用
+│        ├─ ui：register_ui("_arch_ui", 实例) → extras["ui_adapter"]
+│        ├─ context_store / project_manager：register_component(kind,
+│        │    "_arch_xxx", 工厂) → 写入 components 声明
+│        ├─ hooks：先退订上次的架构级订阅 → bus.subscribe 重挂
+│        ├─ security：safe() 安装安全套件（记录进 meta 可退订）
+│        ├─ plugins：install_plugin_dirs 走完整加载管线
+│        ├─ logger / storage / error_handler → extras（引擎消费）
+│        ├─ 自定义槽位：遍历 snapshot_slots()，applier 非空的
+│        │   逐槽位调用 applier(reg, layer, value, params, ctx)
+│        └─ 组装最终预设 Preset(...)（槽位覆盖 + 基线合并）
+│           → reg.register_preset(final)
+│
+├─ 5. NorpEngine(layer, registry, preset, loop, frontend, extras)
+│     engine.start() → _build_agent()：
+│       call_factory(agent_runtime 槽位实现, {registry, preset, ui,
+│       task_params, layer, config}) → AgentRuntime 构造完成
+│
+└─ 6. 消费（engine.submit(text) → agent.run()）
+      registry.resolve_model(preset.model)    → 模型实例
+      registry.tool_schemas(preset.tools)     → 工具 schema 列表
+      registry.resolve_tool(name)             → 工具实例（调用时）
+      registry.build_session(preset.session)  → 会话实例（按需新建）
+      registry.build_sandbox(preset.sandbox)  → 沙箱实例（按需新建）
+```
+
+三个关键结论：
+
+1. **注册发生在装配器，消费发生在 Agent 运行时**——你的组件一旦
+   进表，核心代码零修改即可使用；
+2. **槽位值最终都变成「注册表条目 + 预设声明」**：内部名
+   （`_arch_xxx`）是装配器的通用手段，保证「你的实现」和「内置
+   实现」以完全相同的路径被消费；
+3. **顺序敏感**：preset 先定基线，随后各槽位覆盖基线，最后合并
+   出最终预设——所以 `npa(preset="minimal", model="myapp.model:create")`
+   的最终预设 = minimal 基线 + 你的模型覆盖。
+
+### 26.5 三种注册时机与热重载
+
+| 时机 | 方式 | 生效时机 | 典型场景 |
+|---|---|---|---|
+| 启动装配期 | `npa()` 槽位参数（声明式）；或 `npa()` 前直接 `reg.register_*`（程序式） | 启动即生效 | 应用装配、库化集成 |
+| 运行期 | `npa.remount(slot=...)`；或运行中直接 `reg.register_*` | 组件槽位：下一次 run()；装配槽位：AgentRuntime 热重建 | 换模型 / 换工具集 / 换安全级别 |
+| 代码热重载 | 改模块文件 → `npa.remount(model="myapp.model:create")` | 立即（模块缓存已失效） | 开发迭代、线上修 bug |
+
+程序式注册与 `npa()` 的顺序约定：
+
+```python
+reg = Registry()
+reg.register_tool("weather", WeatherTool())   # 先注册
+reg.register_preset(Preset(name="mine", tools=["weather"], ...))
+npa(preset="mine")                              # 再启动，按名引用
+```
+
+注意：`npa()` 内部会新建自己的 `Registry()` 并安装内置组件，但
+**不会清空你在 npa() 之前对同一个 reg 的注册**——前提是你把同一个
+reg 用上（如上面的程序式装配，或直接把 reg 传给自定义
+`agent_runtime` 工厂）。最省心的做法是：程序式装配用
+`build_registry(layer)` 产出的 reg，声明式装配用 `npa()` 槽位参数。
+
+热重载的模块缓存失效机制（3.7 节）：`remount` 对字符串地址先执行
+`_invalidate_address_module`——删除模块 `__cached__` 对应的 .pyc、
+弹出 `sys.modules` 条目，下次解析从磁盘重新导入。因此
+「改 `myapp/weather_tool.py` → `npa.remount(tools={"weather":
+"myapp.weather_tool:create"})`」即热更新代码；**实例 / 已注册名
+形态没有可失效的地址，改代码后请用地址形态**。
+
+重入安全：`apply_slot_overrides` 可对运行中的注册表重复执行（每次
+`npa.remount` 都调），重复执行前会先退订上次由它挂上的架构级订阅
+（钩子扩展 / 安全套件 / 插件），保证热挂载不叠加重复订阅——自定义
+槽位 applier 同样要遵守此约定（用 `ctx["meta"]` 记录待退订对象，
+25.10.3）。
+
+### 26.6 槽位注册与通用组件注册：两种「注册」的区别
+
+框架有两套「注册」API，容易混淆，对比如下：
+
+| 维度 | `register_slot`（槽位表热插拔） | `register_component`（通用组件） |
+|---|---|---|
+| 注册什么 | **插口**：新的 npa() 关键字参数（槽位名） | **实现**：某种类（kind）下的具名实现 |
+| 入口 | `norpagent.arch.slots.register_slot` | `reg.register_component(kind, name, factory)` |
+| 生效范围 | npa() 参数校验、ArchLayer 装配、`npa.remount` 热替换、`layer.describe()` 清单全管线 | 预设 `components` 声明 + `ctx.component(kind)` 取用 |
+| 装配方式 | `SlotSpec.applier(reg, layer, value, params, ctx)` 回调 | 框架按 preset.components 直接 `build_component` |
+| 保护规则 | 18 个内置槽位名不可注册 / 覆盖 / 注销 | 无保护（dict 覆盖语义） |
+
+一句话：**先有插口（槽位），再有塞进插口的实现（注册表条目）**。
+绝大多数情况你只需要注册实现（`register_tool` / `register_component`）；
+只有当你想要一个全新的「npa() 可填参数」时才需要 `register_slot`
+（完整开发流程见 3.8 节与 25.10 节）。
+
+`register_slot` 的校验规则（违反抛 `SlotError`）：
+
+- 槽位名必须是合法 Python 标识符（它是 npa() 的关键字参数名），
+  且不能是 Python 关键字、不能是 `prompt` / `config`（launch 特殊键）；
+- 18 个内置槽位名受保护（`is_builtin_slot`）；
+- `string_semantics` 必须是 `address` / `name` / `name_or_address` /
+  `literal` 之一；`applier` 必须是 callable 或 None；
+- 重名注册需要 `replace=True`（仅限自定义槽位，热替换规格；已装配
+  的实现保持原状，下一次 remount 按新规格解析）。
+
+`register_slot` 注册即生效：注册发生在 `npa()` 调用之前即可被识别
+为槽位（launch 按实时槽位表拆分参数）；注册发生在运行中，已启动
+的架构层 `connect` 幂等补齐、`remount` 可直接使用新槽位。
+
+### 26.7 注册校验与错误处理
+
+注册 / 装配阶段的三类异常，语义各不相同：
+
+| 异常 | 抛出场景 | 处理建议 |
+|---|---|---|
+| `ComponentError` | 解析未注册名；`register_preset` 收到非 Preset；自定义槽位 applier 异常（统一包装） | 检查名字是否注册、拼写是否正确；用 `reg.list_*()` 核对可用名 |
+| `SlotError` | 槽位表非法操作：注册内置槽位名 / 重名不 replace / 注销不存在 / 槽位名非法 | 按错误信息修正规格；内置槽位改值用 `npa.remount` 而非改规格 |
+| `AddressError`（继承 ImportError） | 地址解析失败：模块不存在 / 属性不存在 / 地址为空 | 检查模块路径与属性名；import 该模块自测；**不要静默回落**（25.2.6 红线） |
+
+预设引用的完整性可提前校验：
+
+```python
+missing, missing_tools = reg.validate_preset(my_preset)
+# missing == [] 且 missing_tools == [] 时预设才可用
+# missing 示例: ["model=openai_compat", "component=vector_store:pg"]
+```
+
+运行期诊断三板斧：
+
+```python
+reg.list_tools()                    # 注册表里到底有什么（1 类）
+reg.tool_schemas(["weather"])       # 工具的 schema 是否可用（2 类）
+eng.layer.describe()                # 装配清单：每个槽位从哪来（3 类）
+```
+
+### 26.8 注册流程最佳实践与检查清单
+
+最佳实践：
+
+1. **命名规范**：小写字母 + 下划线，与内置名（`sqlite` / `pooled` /
+   `persistent` / `openai_compat` 等）不冲突；插件工具名前缀插件名
+   避免覆盖（`weather_current` 优于 `get_time`）。
+2. **工厂 vs 实例**：会话 / 沙箱 / 调度器传**工厂**（每次新建）；
+   模型 / 工具 / UI 传**实例**（全局共享）。工具要带每次运行独立
+   的状态才用工厂包装，否则共享实例即可（注意线程安全）。
+3. **注册时机**：声明式（`npa()` 槽位）适合应用装配；程序式
+   （`reg.register_*`）适合库化集成与动态条件装配；热重载
+   （`npa.remount`）适合开发迭代与线上调整——三者可混用，最终
+   都汇入同一张注册表。
+4. **地址形态优先**：模块地址（`pkg.mod[:attr]`）同时获得工厂
+   注入、`;key=value` 子句、代码热重载三项能力，是推荐形态。
+5. **热重载红线**：dict 键值对的值必须是有效模块——已注册名 /
+   可解析地址 / 实例三选一；形如地址却解析失败会抛 `AddressError`，
+   绝不静默回落（25.2.6 / 25.10.5）。
+6. **装配可观测**：交付前跑一遍 `layer.describe()`，确认你的实现
+   出现在清单里、来源正确（地址 / 直接值 / 默认逻辑）。
+
+注册流程检查清单（新组件交付前逐项自检）：
+
+| # | 检查项 | 依据 |
+|---|---|---|
+| 1 | 组件注册进正确的命名空间（工具→tools，会话→sessions，组件→components） | 26.2 |
+| 2 | 会话 / 沙箱 / 调度器传工厂，模型 / 工具 / UI 传实例 | 26.2 |
+| 3 | 名字不与内置冲突、小写下划线 | 26.8 |
+| 4 | 至少一种形态验证：`reg.list_*()` 能看到、`resolve_*` 能取到 | 26.7 |
+| 5 | 地址形态可导入：`import myapp.xxx` 成功、属性存在 | 26.7 |
+| 6 | 地址形态可热重载：改代码 → remount → 新代码生效 | 26.5 |
+| 7 | dict 键值对的值是有效模块（红线） | 26.7 / 25.2.6 |
+| 8 | 预设引用校验通过：`validate_preset` 无缺失 | 26.7 |
+| 9 | `layer.describe()` 装配清单显示正确来源 | 26.4 / 3.5 |
+| 10 | 自定义槽位 applier 重入安全（`ctx["meta"]` 记录待退订对象） | 26.5 / 25.10.3 |
+| 11 | 异常语义正确：未注册→`ComponentError`，地址错→`AddressError`，槽位表→`SlotError` | 26.7 |
+| 12 | 卸载路径存在：插件 `unregister_plugin`、槽位 `unregister_slot` | 26.2 / 26.6 |
+
+---
+
 ## 附录 D　术语表
 
 | 术语 | 定义 |
 |---|---|
 | 地址函数（Address Function） | 框架的核心抽象：槽位值填「地址」（模块路径 / 工厂 / 实例）即接入，不填走默认 |
-| 槽位（Slot） | 一个可替换组件的位置；`np(...)` 的关键字参数名就是槽位名 |
+| 槽位（Slot） | 一个可替换组件的位置；`npa(...)` 的关键字参数名就是槽位名 |
 | 槽位表热插拔 | `register_slot()` 运行时注册自定义槽位，注册即接入装配 / 校验 / 热替换全管线 |
 | 最小内核 | 全框架仅四样不可替换：ArchLayer、地址解析器、Registry、EventBus |
 | 地址字符串语义 | `address` / `name` / `name_or_address` / `literal` 四种字符串解读方式 |
@@ -4112,7 +5754,7 @@ loop.call_soon_threadsafe(loop.stop)
 | 快照（Snapshot） | 系统状态的序列化存档（架构槽位 + 运行时参数 + WebUI 设置） |
 | 最后正常快照 | 引擎启动成功 30 秒健康期后自动标记的正常版本，救援 CLI 的一键恢复目标 |
 | 崩溃救援（Rescue） | `norpagent-rescue`：主程序起不来也能回退快照的纯标准库 CLI |
-| 安全模式（Safe Mode） | `np(safemode="on")`：只加载最小化内核，跳过全部插件 |
+| 安全模式（Safe Mode） | `npa(safemode="on")`：只加载最小化内核，跳过全部插件 |
 | 人类救援（Human Rescue） | 模型失效时人工接管：`norpagent-rescue tools / tool-call / manual / serve` 手动传参调用全部工具并读取原始结果 |
 | 安全套件（SafetyKit） | `norpagent.safe()` 安装的安全策略集合（审批 / 网络 / 插件 / 防护 API） |
 | 插件安全管线 | 签名 → 审计 → 导入限制 → 注册 的插件加载全流程 |

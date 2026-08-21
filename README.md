@@ -10,8 +10,8 @@
 ## 特性一览
 
 - **架构层 + 地址函数**：除底层最小内核（`ArchLayer` / 地址解析 / 注册表 / 事件总线）外，全部组件都是槽位——模型、前端、事件循环、会话、沙箱……填地址即可替换；
-- **槽位表热插拔（v0.9）**：`register_slot()` / `unregister_slot()` 运行时注册 / 注销自定义槽位，注册即接入 `np()` 参数校验、装配、`np.remount()` 热替换、`layer.describe()` 清单全管线（内置 18 槽位受保护，其值可随时热替换）；
-- **工作回退（v0.9）**：快照时间线 + Undo / Redo / Rollback（Web UI 按钮 / Ctrl+Z / API，进程内即时生效）；独立崩溃救援 CLI `norpagent-rescue`（纯标准库，主程序起不来也能回退，提示「最后一次正常工作的快照」一键恢复）；安全模式 `np(safemode="on")` / `norpagent --safe-mode`（只加载最小化内核，跳过全部插件）；
+- **槽位表热插拔（v0.9）**：`register_slot()` / `unregister_slot()` 运行时注册 / 注销自定义槽位，注册即接入 `npa()` 参数校验、装配、`npa.remount()` 热替换、`layer.describe()` 清单全管线（内置 18 槽位受保护，其值可随时热替换）；
+- **工作回退（v0.9）**：快照时间线 + Undo / Redo / Rollback（Web UI 按钮 / Ctrl+Z / API，进程内即时生效）；独立崩溃救援 CLI `norpagent-rescue`（纯标准库，主程序起不来也能回退，提示「最后一次正常工作的快照」一键恢复）；安全模式 `npa(safemode="on")` / `norpagent --safe-mode`（只加载最小化内核，跳过全部插件）；
 - **人类救援（v0.9.3）**：模型失效时人工接管全部 20 个内置工具——`norpagent-rescue tools / tool-call / manual / serve`（HTTP API + 操作员页面），手动传参、读取原始结果；与模型走同一 RunContext 路径、写同一份状态；无插件、默认仅监听 127.0.0.1、硬超时弃置 + 取消信号；
 - **自研异步调度核心**：`norpagent.nasyncio`（原 nasync_io，已打包进库）是默认事件循环核心——**不依赖、不 import 标准 asyncio**；
 - **安全系统整体剥离**：`norpagent.safe()` 一句话挂载全套安全策略，默认**钩子零干预**（不挂钩子），`hooks=True` / `kit.install_hooks()` 才显式干预钩子；
@@ -46,12 +46,12 @@ pip install norpagent[all]          # 全部
 ### 5 行代码跑起来
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np()                        # 完全按默认逻辑运行（standard 预设 + Web 前端）
+npa()                        # 完全按默认逻辑运行（standard 预设 + Web 前端）
 running = True
 while running:
-    if np.stop() == True:   # 生命周期函数：应用结束即退出
+    if npa.stop() == True:   # 生命周期函数：应用结束即退出
         running = False
 ```
 
@@ -59,57 +59,57 @@ while running:
 
 两个要点：
 
-1. **`np()` 是模块级调用**——`norpagent` 模块本身可调用，等价于 `norpagent.launch()`；
-2. **`np.stop()` 是生命周期函数**——返回 `True` 表示 Agent 应用已结束，主循环应退出。
+1. **`npa()` 是模块级调用**——`norpagent` 模块本身可调用，等价于 `norpagent.launch()`；
+2. **`npa.stop()` 是生命周期函数**——返回 `True` 表示 Agent 应用已结束，主循环应退出。
 
 ### 单次任务
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(prompt="用一句话解释什么是地址函数")
+npa(prompt="用一句话解释什么是地址函数")
 running = True
 while running:
-    if np.stop() == True:
+    if npa.stop() == True:
         running = False
 
-engine = np.current()
+engine = npa.current()
 print(engine.last_result.final_content)
 ```
 
-传入 `prompt` 后：Agent 执行完这一条任务即自动停止，任务结果保存在 `np.current().last_result`。
+传入 `prompt` 后：Agent 执行完这一条任务即自动停止，任务结果保存在 `npa.current().last_result`。
 
 ### 换零件：填地址即可
 
 ```python
-np(preset="standard")                                  # 换预设模式
-np(model="openai_compat")                              # 换大脑（模型）
-np(async_loop="norpagent.loops.nasyncio:NasyncioLoopRuntime")  # 换事件循环系统
-np(frontend="norpagent.frontends.console:ConsoleFrontend")     # 换前端（默认即 Web）
-np(session="sqlite", sandbox="pooled")                 # 换会话与沙箱
+npa(preset="standard")                                  # 换预设模式
+npa(model="openai_compat")                              # 换大脑（模型）
+npa(async_loop="norpagent.loops.nasyncio:NasyncioLoopRuntime")  # 换事件循环系统
+npa(frontend="norpagent.frontends.console:ConsoleFrontend")     # 换前端（默认即 Web）
+npa(session="sqlite", sandbox="pooled")                 # 换会话与沙箱
 ```
 
 ### 运行中热挂载（无需重启）
 
 ```python
-np.remount(model="openai_compat")                      # 换模型：下一次 run 生效
-np.remount(frontend="norpagent.frontends.console:ConsoleFrontend")
-np.remount(model="myapp.model:create")                 # 改模块文件后重挂载即热重载
-np.remount(flow_html="H:/path/flow.html")              # 换 /flow 流程页（HTTP 不重启）
-np.remount(html="H:/path/front.html")                  # 换 / 主页面（HTTP 不重启）
-np.remount(flow_html=None)                             # 卸载挂载，回落库内置
+npa.remount(model="openai_compat")                      # 换模型：下一次 run 生效
+npa.remount(frontend="norpagent.frontends.console:ConsoleFrontend")
+npa.remount(model="myapp.model:create")                 # 改模块文件后重挂载即热重载
+npa.remount(flow_html="H:/path/flow.html")              # 换 /flow 流程页（HTTP 不重启）
+npa.remount(html="H:/path/front.html")                  # 换 / 主页面（HTTP 不重启）
+npa.remount(flow_html=None)                             # 卸载挂载，回落库内置
 ```
 
 ### 工作回退（Undo / Redo / Rollback / 崩溃救援）
 
 ```python
-np.snapshot_system("装插件之前")           # 手动快照（变更自动快照默认开启）
-np.undo()                                 # 撤销最近一次操作（进程内即时）
-np.redo()                                 # 恢复撤销
-np.rollback("20260818T230101_ab12cd")     # 回退到任意快照
-np.rollback()                             # 回退到最后一次正常快照
-np.list_snapshots()                       # 时间线（★ = 最后正常）
-np(safemode="on")                         # 安全模式：只加载最小化内核
+npa.snapshot_system("装插件之前")           # 手动快照（变更自动快照默认开启）
+npa.undo()                                 # 撤销最近一次操作（进程内即时）
+npa.redo()                                 # 恢复撤销
+npa.rollback("20260818T230101_ab12cd")     # 回退到任意快照
+npa.rollback()                             # 回退到最后一次正常快照
+npa.list_snapshots()                       # 时间线（★ = 最后正常）
+npa(safemode="on")                         # 安全模式：只加载最小化内核
 ```
 
 Web UI：左侧「回退」页 + Ctrl+Z / Ctrl+Shift+Z。主程序无法启动时：
@@ -138,12 +138,12 @@ norpagent-rescue serve --token my-secret            # 可选 Bearer 认证
 
 ### 控制台 REPL
 
-显式使用控制台前端时，在 Python 交互式解释器（REPL）中自动切换同步模式：`np()` 阻塞到用户退出（`/exit`、`exit()`、Ctrl+C 或 EOF），无需轮询循环：
+显式使用控制台前端时，在 Python 交互式解释器（REPL）中自动切换同步模式：`npa()` 阻塞到用户退出（`/exit`、`exit()`、Ctrl+C 或 EOF），无需轮询循环：
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np(frontend="norpagent.frontends.console:ConsoleFrontend")
+npa(frontend="norpagent.frontends.console:ConsoleFrontend")
 # >>> 你: 你好
 # >>> 使用 /exit 退出
 ```
@@ -187,9 +187,9 @@ python -m norpagent plugin-sign myplugin.py --key <ed25519-hex>
 
 ### 槽位与地址函数
 
-除底层最小内核外，全部组件都是槽位；`np(...)` 的关键字参数名就是槽位名，槽位值填「地址字符串」（`package.module:attr` 或注册名）即完成替换，装配由 `ArchLayer` 统一解析。
+除底层最小内核外，全部组件都是槽位；`npa(...)` 的关键字参数名就是槽位名，槽位值填「地址字符串」（`package.module:attr` 或注册名）即完成替换，装配由 `ArchLayer` 统一解析。
 
-槽位表本身也可以热插拔——第三方库运行时注册全新槽位，注册即接入 `np()` 参数校验、装配、热替换、清单全管线：
+槽位表本身也可以热插拔——第三方库运行时注册全新槽位，注册即接入 `npa()` 参数校验、装配、热替换、清单全管线：
 
 ```python
 from norpagent.arch import SlotSpec, register_slot
@@ -212,15 +212,15 @@ register_slot(SlotSpec(
     remount_rebuild_agent=True,     # 热替换后热重建 AgentRuntime，组件立即生效
 ))
 
-import norpagent as np
+import norpagent as npa
 
-np(vector_store=MyVectorStore())    # 装配：engine.agent.components["vector_store"]
-np.remount(vector_store=Other())    # 热替换：AgentRuntime 热重建
+npa(vector_store=MyVectorStore())    # 装配：engine.agent.components["vector_store"]
+npa.remount(vector_store=Other())    # 热替换：AgentRuntime 热重建
 ```
 
-内置 18 个槽位是框架结构契约，不可注册 / 覆盖 / 注销（其值仍可随时 `np.remount` 热替换）。完整契约与保护规则见开发手册第 3 章。
+内置 18 个槽位是框架结构契约，不可注册 / 覆盖 / 注销（其值仍可随时 `npa.remount` 热替换）。完整契约与保护规则见开发手册第 3 章。
 
-**v0.9.1：全部槽位支持按地址加载**。literal 槽位（security / storage / hooks / plugins / logger / error_handler）与 name 槽位（ui / preset）的字符串值同样接受地址——形如 `pkg.mod[:attr]`（含 `.` 或 `:` 的点分标识符）即按地址加载，其余保持原语义（`np(security="high")` 仍是级别、`np(storage="./data")` 仍是路径、`np(ui="web")` 仍是注册名）；任何槽位的 **dict 键值对的值**支持纯地址解析：`tools={"my_tool": "myapp.tools:create"}`、`hooks={"before_model_call": "myapp.guard:fn"}` 的值自动按地址解析为对象（解析失败抛 `AddressError`）。
+**v0.9.1：全部槽位支持按地址加载**。literal 槽位（security / storage / hooks / plugins / logger / error_handler）与 name 槽位（ui / preset）的字符串值同样接受地址——形如 `pkg.mod[:attr]`（含 `.` 或 `:` 的点分标识符）即按地址加载，其余保持原语义（`npa(security="high")` 仍是级别、`npa(storage="./data")` 仍是路径、`npa(ui="web")` 仍是注册名）；任何槽位的 **dict 键值对的值**支持纯地址解析：`tools={"my_tool": "myapp.tools:create"}`、`hooks={"before_model_call": "myapp.guard:fn"}` 的值自动按地址解析为对象（解析失败抛 `AddressError`）。
 
 ### 自研异步核心：norpagent.nasyncio
 
@@ -233,11 +233,11 @@ np.remount(vector_store=Other())    # 热替换：AgentRuntime 热重建
 5. **核心独立可用**——`norpagent.nasyncio` 本身是独立微型异步库，可脱离框架单独使用。
 
 ```python
-import norpagent as np
+import norpagent as npa
 import norpagent.nasyncio as core   # 自研核心模块（可调用）
 
 core.EventLoop                      # 自研事件循环类
-loop_rt = np.nasyncio()             # LoopRuntime 默认实现（同 core()）
+loop_rt = npa.nasyncio()             # LoopRuntime 默认实现（同 core()）
 ```
 
 0.7 旧地址 `norpagent.loops.std_asyncio:StdLoopRuntime` 保留为兼容垫片（不 import asyncio），历史代码不失效。详见开发手册第 4 章。
@@ -294,33 +294,33 @@ result = agent.run("你好")
 print(result.final_content)
 ```
 
-也可以直接 `np(preset="embedded")` 开箱即用（默认 headless，不启动 HTTP 服务）。
+也可以直接 `npa(preset="embedded")` 开箱即用（默认 headless，不启动 HTTP 服务）。
 
 **超高并发**：EventBus 写时复制（每事件省一次监听者列表复制，实测 >160 万事件/秒）；SSE 有界背压（默认丢最旧，慢客户端不再无限吃内存，且支持运行中热改变）；SSE 帧批量写出 + 断连 ≤1s 快速回收；HTTP 并发调优（监听积压、反向代理缓冲禁用）。详见开发手册第 14 章。
 
 ### 顶层 API 速查
 
 ```python
-import norpagent as np
+import norpagent as npa
 
-np()                          # 启动默认 Agent（= np.launch()）
-np.stop()                     # 生命周期轮询：返回 True 表示应用已结束
-np.current()                  # 当前引擎（NorpEngine）
-np.submit("你好")              # 纯 API 提交
-np.remount(model="...")       # 热挂载槽位
-np.shutdown()                 # 停机
-np.nasyncio()                 # 自研事件循环（LoopRuntime）
-np.safe(...)                  # 安全策略挂载
-np.register_slot(...)         # 槽位表热插拔
-np.unregister_slot(...)
-np.snapshot_slots()
-np.is_builtin_slot("model")
+npa()                          # 启动默认 Agent（= npa.launch()）
+npa.stop()                     # 生命周期轮询：返回 True 表示应用已结束
+npa.current()                  # 当前引擎（NorpEngine）
+npa.submit("你好")              # 纯 API 提交
+npa.remount(model="...")       # 热挂载槽位
+npa.shutdown()                 # 停机
+npa.nasyncio()                 # 自研事件循环（LoopRuntime）
+npa.safe(...)                  # 安全策略挂载
+npa.register_slot(...)         # 槽位表热插拔
+npa.unregister_slot(...)
+npa.snapshot_slots()
+npa.is_builtin_slot("model")
 # 工作回退
-np.snapshot_system("说明")     # 手动快照
-np.undo() / np.redo()         # 撤销 / 恢复
-np.rollback("<快照id>")        # 回退任意版本（缺省 = 最后正常）
-np.list_snapshots()           # 快照时间线
-np.mark_good_snapshot("<id>") # 标记「正常」
+npa.snapshot_system("说明")     # 手动快照
+npa.undo() / npa.redo()         # 撤销 / 恢复
+npa.rollback("<快照id>")        # 回退任意版本（缺省 = 最后正常）
+npa.list_snapshots()           # 快照时间线
+npa.mark_good_snapshot("<id>") # 标记「正常」
 ```
 
 ---
@@ -333,7 +333,7 @@ norpagent/
 ├── kernel/        # 最小内核：Registry / EventBus / AgentRuntime / 预设
 ├── loops/         # 事件循环架构函数（nasyncio 默认实现 + std 兼容垫片）
 ├── nasyncio.py    # 自研异步 IO 核心（原 nasync_io，零 asyncio 依赖）
-├── runtime/       # np() 启动与生命周期：launch / stop / remount / NorpEngine
+├── runtime/       # npa() 启动与生命周期：launch / stop / remount / NorpEngine
 ├── recovery/      # 工作回退：快照存储 / 采集回放 / Undo / Redo / Rollback
 ├── rescue.py      # 崩溃救援 CLI（norpagent-rescue，纯标准库）
 ├── rescue_api.py  # 人类救援：手操工具环境 + HTTP API + 操作员页面（v0.9.3）
@@ -351,7 +351,7 @@ norpagent/
 ├── protocols/     # 组件协议
 ├── flows/         # 执行流程
 ├── cli.py         # 命令行入口（python -m norpagent）
-└── __init__.py    # 模块即入口：np() 可调用模块
+└── __init__.py    # 模块即入口：npa() 可调用模块
 ```
 
 ---
