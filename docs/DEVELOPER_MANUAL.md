@@ -1,9 +1,9 @@
 # NORP Agent 开发手册
 
-> **版本**：0.9.4 ｜ **许可**：Copyright (c) 2026 xingluosama121, MIT Licensed
+> **版本**：0.9.5 ｜ **许可**：Copyright (c) 2026 xingluosama121, MIT Licensed
 >
 > NORP Agent初版发布于2026年7月29日，在8月16日正式上线PyPI，定位为“智能体元框架”。
-> 2026-08 修订：第 24 章救援模式专章（底层循环控制 + 人类接管）｜ 内核修复：select 超时上限钳制（暴力压测发现，Windows 超远定时器崩溃）｜ 新增 35 项最小主异步循环暴力压测（test/stress_nasyncio_core.py）｜ 15.6 人类救援手动工具接管 API（v0.9.3，模型失效时手操全部工具：tools / tool-call / manual / serve）｜ 3.9 任务级槽位注入（submit(slot_overrides=...)）｜ 3.7 装配槽位热重建的在途任务竞态与排水建议 ｜ 4.6.4 守护工作池队列语义与卡死兜底矩阵 ｜ 23.1 EventBus 基准口径与锁竞争边界 ｜ 第 25 章开发者实战专章（逐模块开发 / 槽位开发 / 插件与工具开发详解，含热重载红线：键值对的值必须是有效模块）｜ 第 26 章注册流程详解（注册表 9 大命名空间 / 四种形态与字符串语义 / npa() 装配全链路 / 三种注册时机与热重载 / 槽位注册与组件注册的区别 / 校验与错误处理 / 检查清单）
+> 2026-08 修订：第 24 章救援模式专章（底层循环控制 + 人类接管）｜ 内核修复：select 超时上限钳制（暴力压测发现，Windows 超远定时器崩溃）｜ 新增 35 项最小主异步循环暴力压测（test/stress_nasyncio_core.py）｜ 15.6 人类救援手动工具接管 API（v0.9.3，模型失效时手操全部工具：tools / tool-call / manual / serve）｜ 3.9 任务级槽位注入（submit(slot_overrides=...)）｜ 3.7 装配槽位热重建的在途任务竞态与排水建议 ｜ 4.6.4 守护工作池队列语义与卡死兜底矩阵 ｜ 23.1 EventBus 基准口径与锁竞争边界 ｜ 第 25 章开发者实战专章（逐模块开发 / 槽位开发 / 插件与工具开发详解，含热重载红线：键值对的值必须是有效模块）｜ 第 26 章注册流程详解（注册表 9 大命名空间 / 四种形态与字符串语义 / npa() 装配全链路 / 三种注册时机与热重载 / 槽位注册与组件注册的区别 / 校验与错误处理 / 检查清单）｜ 第 27 章最小内核详解专章（事件总线 / 槽位连接器 / 注册表 / 地址解析器四组件：数据结构、API、内部机制与启动 / 热挂载协作走查）
 
 ---
 
@@ -38,6 +38,7 @@
 - [第 24 章　救援模式：底层循环控制与人类接管](#第-24-章救援模式底层循环控制与人类接管)
 - [第 25 章　开发者实战：模块、槽位、插件与工具开发](#第-25-章开发者实战模块槽位插件与工具开发)
 - [第 26 章　注册流程详解](#第-26-章注册流程详解)
+- [第 27 章　最小内核详解：事件总线、槽位连接器、注册表与地址解析器](#-第-27-章最小内核详解事件总线槽位连接器注册表与地址解析器)
 - [附录 D　术语表](#附录-d术语表)
 - [附录 E　29 钩子事件负载速查表](#附录-e29-钩子事件负载速查表)
 
@@ -5727,6 +5728,528 @@ eng.layer.describe()                # 装配清单：每个槽位从哪来（3 �
 
 ---
 
+## 第 27 章　最小内核详解：事件总线、槽位连接器、注册表与地址解析器
+
+> 前置阅读：第 2 章 2.3（最小内核四模块定义）、第 3 章（架构层与地址函数）、
+> 第 9 章 9.5（钩子与 EventBus 的关系）、第 26 章（注册流程）。
+> 本章把四件「不可替换」的组件逐一拆开讲透：它们各自的数据结构、API、
+> 内部机制，以及一次启动与热挂载中四者如何协作。
+
+### 27.1 总览：四者构成装配闭环
+
+2.3 节已给出最小内核的定义——全框架仅四样不可替换：
+
+| # | 组件 | 类 / 模块 | 一句话职责 |
+|---|---|---|---|
+| 1 | 槽位连接器 | `norpagent.arch.layer.ArchLayer` | 把「槽位值」装配成「实现对象」，支持运行中热挂载 |
+| 2 | 地址解析器 | `norpagent.arch.address`（`resolve_address`） | 把「地址字符串」解析成「可用的对象」 |
+| 3 | 注册表 | `norpagent.kernel.registry.Registry` | 名字 → 组件的映射中心，一切皆注册项 |
+| 4 | 事件总线 | `norpagent.kernel.events.EventBus` | 组件间的事件传递通道，写时复制 + 无锁迭代 |
+
+其余组件——事件循环、Agent 循环、模型、工具、会话、沙箱、调度器、上下文库、
+项目管理、钩子扩展、安全、插件、前端、渲染器、预设、日志、存储、错误处理——
+均为槽位，全部可以替换。
+
+四者的协作闭环（一次 `npa()` 启动）：
+
+```
+npa(...) 槽位值
+   │
+   ▼
+┌───────────────────────────────────────────────────────┐
+│ ArchLayer（槽位连接器）                                  │
+│   1. set_default()    注册各槽位内置默认逻辑             │
+│   2. connect() 逐槽位装配（_connect_slot）：            │
+│        值=None    → 默认工厂                            │
+│        值=字符串  → resolve_address() 解析（地址解析器） │
+│        值=dict    → 键值对地址递归解析                   │
+│   3. layer[slot] 直接取实现；describe() 输出装配清单     │
+└───────────────────────────────────────────────────────┘
+   │ 装配结果落到注册表
+   ▼
+┌───────────────────────────────────────────────────────┐
+│ Registry（注册表）                                      │
+│   组件按名字注册 / 解析；bus 与 hooks 挂在注册表上        │
+│   build_registry() / apply_slot_overrides() 填充        │
+└───────────────────────────────────────────────────────┘
+   │ 运行期
+   ▼
+┌───────────────────────────────────────────────────────┐
+│ EventBus（事件总线）                                    │
+│   AgentRuntime / UI / 插件 / 钩子 全部订阅总线           │
+│   emit() 广播通知；intercept() 可变分发 + 一票否决        │
+└───────────────────────────────────────────────────────┘
+```
+
+职责边界一句话版：
+
+- 地址解析器只回答「地址是什么对象」；
+- 槽位连接器只回答「这个槽位装什么、怎么装、能不能换」；
+- 注册表只回答「这个名字对应哪个组件、怎么造出来」；
+- 事件总线只回答「谁在什么时候收到什么通知」。
+
+四者相互独立，各自都不知道对方的具体实现（地址解析器不知道 Registry，
+EventBus 不知道 ArchLayer），由 `runtime.mount` 装配器把它们串起来。
+下面的小节逐一展开。
+
+### 27.2 事件总线 EventBus
+
+#### 27.2.1 定位与设计目标
+
+EventBus 是「内核与所有外部组件（UI / 插件 / 钩子）的唯一解耦点」：
+AgentRuntime 不直接调用 UI 的方法，而是向总线发事件；UI 只订阅总线，
+不感知内核实现。
+
+代码位置：`src/norpagent/kernel/events.py`。
+
+核心类型：
+
+- `EventType(str, Enum)`：16 个标准事件名，与旧插件系统 `HOOK_NAMES`
+  逐一对齐（旧代码注释自称 15 个，实含 on_usage_update 共 16 个）；
+  迁移时映射无缝：hook = 事件订阅（11.5 / 附录 E）；
+- `AgentEvent`：一条事件 = `type` + `payload`(dict) + `ts`，带 `.get()` 取值；
+- `HookVeto`：一票否决异常（`intercept` 不捕获它，直达内核）；
+- `EventBus`：总线本体（线程安全）。
+
+#### 27.2.2 数据结构与线程安全模型
+
+```python
+self._all: List[Listener]                  # 订阅所有事件的监听器
+self._typed: Dict[str, List[Listener]]     # 按事件类型分组的监听器
+self._lock = threading.RLock()             # 写锁
+self._log_error: Optional[Callable]        # 订阅者异常回调
+```
+
+线程安全采用「写时复制 + 无锁迭代」：
+
+- `subscribe` / `unsubscribe`：锁内**构建新列表**并替换引用，绝不原地修改；
+- `emit` / `intercept`：锁内只取一次引用（`_snapshot`），随后**无锁直接迭代**；
+- 读者持有的旧快照永不被动（写者替换的是新列表对象），并发安全不变；
+- 对高频事件（如按 token 推送的 on_content）省掉了每次事件都复制监听器
+  列表的开销。
+
+实测口径（23.1）：静态订阅表 + 单线程发布，超过 160 万事件/秒。
+
+#### 27.2.3 订阅与退订
+
+```python
+from norpagent.kernel import EventBus
+
+bus = EventBus()
+
+def on_content(e):
+    print(e.type, e.get("content"))
+
+bus.subscribe(on_content, "on_content")        # 只收 on_content
+bus.subscribe(lambda e: print("all:", e.type)) # None = 收所有事件
+bus.unsubscribe(on_content, "on_content")      # 退订
+```
+
+- `event_type=None` 进入 all 列表（收全部事件）；
+- 指定类型进入 typed 列表；
+- 退订按「第一个相等元素」移除（`_without_one`），重复订阅只退一个。
+
+#### 27.2.4 emit 与 intercept：广播 vs 可变分发
+
+| 维度 | `emit(event_type, **payload)` | `intercept(event_type, **payload)` |
+|---|---|---|
+| 用途 | 观察 / 通知（UI 刷新、日志） | 改写数据流、一票否决 |
+| 返回值 | 忽略 | 第一个非 None 返回值胜出；全 None = 不干预 |
+| 订阅者异常 | 捕获并记录，继续跑 | 普通异常同上；**HookVeto 不捕获**，直达内核 |
+| 调用顺序 | 先 all 订阅者、再 typed 订阅者 | 同左 |
+
+`intercept` 与旧插件系统 `_broadcast_mutating` 语义一致：before_step /
+before_tool_call / after_tool_call 等可变钩子通过返回值改数据流
+（None = 不干预）。
+
+订阅者异常隔离：默认打印到 stderr，可 `set_error_logger(cb)` 自定义——
+订阅者绝不能打断主流程（普通异常全捕获 + `_report_error`），这是
+「总线可用性优先」的硬设计。
+
+#### 27.2.5 16 个标准事件
+
+| 层 | 事件 | 触发点 |
+|---|---|---|
+| L1 agent 生命周期 | on_agent_init / on_agent_shutdown | 引擎启动 / 关闭 |
+| L2 任务 | on_task_start / on_task_done / on_task_error / on_task_stopped / on_task_timeout | 任务五态 |
+| L3 step | before_step / after_step / before_tool_call / after_tool_call / on_user_input_required | 步骤与工具调用 |
+| L4 流式 | on_reasoning / on_content / on_event / on_usage_update | token 级推送 |
+
+#### 27.2.6 与 HookSystem 的关系
+
+`HookSystem(bus)` 是同一总线上的「9 层 29 钩子视图」：
+`registry.hooks.before_model_call.subscribe(fn)` 等价于在 `registry.bus`
+订阅同名事件；未注册的具名事件在发射时自动成为 dynamic 层钩子。
+详见第 9 章 9.5、附录 E。
+
+```python
+from norpagent import Registry
+
+reg = Registry()
+reg.hooks.before_model_call.subscribe(my_fn)   # 钩子视图（推荐）
+reg.bus.subscribe(my_fn, "before_model_call")  # 直接总线（等价）
+```
+
+内核侧也是这么发射的（`AgentRuntime` 内部）：
+
+```python
+self.hooks.on_agent_init.emit(preset=self.preset.name)     # 广播
+result = self.hooks.before_tool_call.intercept(...)        # 可变分发
+```
+
+### 27.3 地址解析器 AddressResolver
+
+#### 27.3.1 定位
+
+代码位置：`src/norpagent/arch/address.py`。
+
+地址解析器只做一件事：**把「地址」变成「对象」**——不调用工厂、不做装配、
+不检查协议。工厂上下文注入与调用规则在 `norpagent.arch.layer.call_factory`。
+「不填 = 默认，填了 = 接入」的地址函数语义（3.2）全部由它落地。
+
+#### 27.3.2 四种地址形态
+
+| 形态 | 含义 |
+|---|---|
+| `None` | 用槽位默认实现（调用方处理；解析器原样返回 None） |
+| `"pkg.mod"` | 导入模块；优先取模块内约定工厂属性 `create` / `build` / `default`，都没有则整模块挂载 |
+| `"pkg.mod:attr"` | 导入模块并取指定属性作为实现 |
+| callable / 其他对象 | 原样返回（工厂函数 / 类 / 实例 / 值） |
+
+```python
+from norpagent.arch.address import resolve_address
+
+resolve_address(None, slot="model")                    # -> None
+resolve_address("myapp.models:create", slot="model")   # -> 模块属性 create
+resolve_address("myapp.tools", slot="tools")           # -> create/build/default 之一，否则整个模块
+resolve_address(MyTool(), slot="tools")                # -> 原对象（实例直传）
+```
+
+解析细节：
+
+- 属性回退顺序 `_FACTORY_ATTRS = ("create", "build", "default")`；
+- 整模块挂载要求模块本身实现槽位协议（例如一个完整的 LoopRuntime 模块）；
+- `:attr` 属性缺失时报 `AddressError`（绝不静默回落）。
+
+#### 27.3.3 附加配置子句剥离
+
+`"pkg.mod:create;timeout=5"` 中分号后的 `key=value` **不是地址的一部分**——
+解析器先剥离，由 ArchLayer 解析成工厂的 `config` 注入参数。子句永远不会
+干扰模块路径 / 属性解析：
+
+```python
+npa(model="myapp.models:create;api_key=sk-xxx;base_url=https://...")
+# 地址 = myapp.models:create
+# config = {"api_key": "sk-xxx", "base_url": "https://..."}
+```
+
+#### 27.3.4 is_address_like：纯结构判定
+
+`is_address_like(value)` 判断字符串是否形如「纯地址」（`pkg.mod[:attr]`）——
+纯结构检查，无导入、无副作用、无异常：
+
+- 剥离 `;key=value` 后，整串是含至少一个 `.` 或 `:` 的点分标识符；
+- 因此 `"high"` / `"./data"` / `"my_tool"` / `"https://api.example.com"`
+  这类字面量、路径、URL 永远不会被误判为地址；
+- `"myapp.security:high"` / `"myapp.tools"` / `"pkg:attr"` 是地址。
+
+用于 v0.9.1 的「地址优先」判定：literal 槽位与 dict 键值对中，地址形态的
+字符串按地址加载，其余保持原语义（3.3 / 26.3）。
+
+#### 27.3.5 错误语义
+
+```python
+class AddressError(ImportError): ...
+```
+
+模块导入失败、属性缺失、空地址字符串 → 统一抛 `AddressError`
+（继承 ImportError，可被 `except ImportError` 捕获），错误消息带槽位名与
+完整地址，便于定位。**红线：形如地址却解析失败必须抛错，绝不静默回落到
+字面量**（25.2.6 / 25.10.5）。
+
+#### 27.3.6 解析与调用的分工
+
+```
+resolve_address("myapp.models:create", slot="model")  # 解析：拿到工厂对象
+call_factory(create, {"layer": layer, "slot": "model", "config": {...}})  # 调用
+```
+
+- `call_factory` 按签名注入 `layer / slot / config` 等键；工厂不声明的键
+  自动忽略，任何风格的工厂都能插进来；
+- 完全无参的工厂直接零参调用；不可内省的 callable（内置函数）零参调用；
+- 非 callable（模块 / 实例 / 值）原样返回，不调用。
+
+### 27.4 槽位连接器 ArchLayer
+
+#### 27.4.1 定位
+
+代码位置：`src/norpagent/arch/layer.py`。模块 docstring 第一句即定义：
+「Architecture layer (ArchLayer): the slot connector」——槽位连接器。
+
+ArchLayer 是「积木托盘」：
+
+1. 接收一组槽位值（关键字参数 / 配置 dict）；
+2. 槽位留空 → 用默认实现（库内置逻辑，经 `set_default` 注册）；
+3. 槽位填了地址 → 调地址解析器并装配；装配后 `layer[slot]` 直接给实现
+   对象，`layer.describe()` 打印完整装配清单（可观测）。
+
+#### 27.4.2 数据结构
+
+```python
+self.config: Dict[str, Any]                # 槽位值（config dict 与关键字合并，关键字优先）
+self._impls: Dict[str, Any]                # 装配结果：槽位 -> 实现对象
+self._defaults: Dict[str, factory]         # 默认实现工厂（ctx -> impl）
+self._subconfigs: Dict[str, Dict]          # 地址中解析出的 ;key=value 子句
+self._connected: bool                      # 是否已 connect()
+```
+
+#### 27.4.3 核心 API
+
+| 方法 | 作用 |
+|---|---|
+| `set_default(slot, factory)` | 注册该槽位的默认实现工厂（装配器 `mount_defaults` 在 connect 前调用） |
+| `connect()` | 装配全部槽位；**幂等**——重复调用只补装后注册的新槽位 |
+| `remount(slot, value=_RAISE)` | 运行中热挂载：不传 value 按当前配置重解析（先失效模块缓存）；传 None 清空槽位配置回默认；其他值替换配置并立即重建 |
+| `layer[slot]` / `get(slot, default)` | 取装配结果（未 connect 时 `__getitem__` 抛 RuntimeError） |
+| `subconfig(slot)` | 取该槽位地址中解析出的附加配置子句 |
+| `describe()` | 打印装配清单：每个槽位的来源（默认 / 地址 / 直接值）与实现类型 |
+| `is_connected()` | 是否已装配 |
+
+#### 27.4.4 字符串分派：string_semantics 四语义
+
+`_connect_slot` 按槽位的 `string_semantics` 分派字符串值：
+
+| 语义 | 字符串值处理 |
+|---|---|
+| `address` | 作为模块地址解析（默认语义） |
+| `name` | 作为注册表组件名透传（由装配器决定注册） |
+| `name_or_address` | 先按组件名、再按模块地址（装配器在 registry 上下文中决定） |
+| `literal` | 字面量（级别 / 路径 / 日志名） |
+
+v0.9.1 起所有槽位都支持「地址优先」：
+
+- name / name_or_address 槽位：字符串先查注册表名，查不到再按模块地址解析；
+- literal 槽位：字符串形如纯地址（`is_address_like`）→ 按地址加载，否则
+  保持字面量；
+- **任何槽位的 dict 键值对**：值为纯地址字符串 → 统一按地址解析成对象
+  （`_resolve_dict_values` 递归处理，任意深度；列表元素不解析，保持字面
+  语义；hooks 槽位的值是回调本身，地址指向的回调保持原样不调用）。
+
+特例：frontend 槽位的字符串值若是 `.html/.htm` 文件路径，不走地址解析，
+透传给装配器做「HTML 路径直挂」（等价 `WebFrontend(html=...)`，5.4）。
+
+#### 27.4.5 defer_factory：推迟实例化
+
+`defer_factory=True` 的槽位（如 agent_runtime）在 connect 阶段**只解析
+地址、不实例化**；工厂调用推迟到引擎装配期（`NorpEngine._build_agent`），
+那时 registry / preset 上下文已就绪，按签名注入完整上下文。
+
+#### 27.4.6 热挂载与模块缓存失效
+
+```python
+layer.remount("model", "myapp.models:v2")   # 换实现
+layer.remount("model")                      # 按当前配置重解析（热重载改过的代码）
+layer.remount("model", None)                # 清空配置，回落到默认逻辑
+```
+
+`remount` 的字符串地址会先做两步缓存失效（`_invalidate_address_module`）：
+
+1. 删除模块字节码缓存（`module.__cached__` 的 .pyc）——否则同一秒内改写
+   同尺寸文件会被 importlib 误判为「缓存仍新」，重新导入拿到旧代码；
+2. 弹出 `sys.modules` 条目——下次解析从磁盘重新导入。
+
+于是「改代码 → remount → 新代码生效」的热重载闭环成立。自定义槽位
+（`register_slot` 注册，3.8）同样支持 remount，按注册时的 spec 解析；
+`replace=True` 热替换 spec 后再 remount 按新 spec 解析。
+
+#### 27.4.7 与槽位表的关系
+
+槽位表（`norpagent.arch.slots`，`SLOT_SPECS`）本身可热插拔：`register_slot()`
+运行时注册自定义槽位后，connect / remount / describe / set_default 全部按
+**调用时刻的活表**工作——connect 幂等补装晚注册的槽位，remount 同样适用于
+新槽位。SlotSpec 字段（name / protocol / default_address / string_semantics /
+factory_kwargs / defer_factory / applier / remount_rebuild_agent）见 25.10.2。
+
+#### 27.4.8 最小使用示例
+
+```python
+from norpagent.arch.layer import ArchLayer
+
+layer = ArchLayer(async_loop="myapp.loop:create", preset="standard")
+layer.connect()                 # 装配全部槽位
+loop = layer["async_loop"]      # 已连接的循环系统
+print(layer.describe())         # 装配清单（可观测）
+```
+
+### 27.5 注册表 Registry
+
+#### 27.5.1 定位
+
+代码位置：`src/norpagent/kernel/registry.py`。
+
+「一切皆注册项」：模型 / 工具 / 会话 / 沙箱 / 调度器 / UI / 插件 / 预设 /
+通用组件全部按名字注册与解析。AgentRuntime 只与注册表交互，替换任何部件
+都不需要改内核代码。注册表本身是内核的一部分，不知道任何具体实现
+（docstring："unaware of any concrete implementation"）。
+
+#### 27.5.2 9 大命名空间
+
+| 命名空间 | 内部 dict | 注册 API | 解析 API |
+|---|---|---|---|
+| models | `_models` | `register_model(name, provider)` | `resolve_model(name)`（实例） |
+| tools | `_tools` | `register_tool(name, tool)` | `resolve_tool(name)`（实例） |
+| sessions | `_sessions` | `register_session(name, factory)` | `build_session(name)`（调工厂） |
+| sandboxes | `_sandboxes` | `register_sandbox(name, factory)` | `build_sandbox(name)`（调工厂） |
+| schedulers | `_schedulers` | `register_scheduler(name, factory)` | `build_scheduler(name)`（调工厂） |
+| uis | `_uis` | `register_ui(name, adapter)` | `resolve_ui(name)`（实例） |
+| plugins | `_plugins` | `register_plugin(plugin)` | `list_plugins()`（无单取 API） |
+| presets | `_presets` | `register_preset(preset)` | `resolve_preset(name)` |
+| components | `_components[kind]` | `register_component(kind, name, factory)` | `build_component(kind, name, workspace_root=None)` |
+
+关键区别：
+
+- **传实例**：模型 / 工具 / UI（解析即用）；
+- **传工厂**：会话 / 沙箱 / 调度器 / 通用组件（每次 build 新造）；
+  `build_component` 支持 `workspace_root` 自动注入——工厂声明同名参数或
+  `**kwargs` 时传入（项目管理等组件靠它定位项目）。
+
+`register_plugin` 的副作用：工具进入工具表（同名覆盖 + 日志提示）；
+钩子订阅到总线（`self.bus.subscribe(fn, hook)`）。`unregister_plugin` 反向：
+退订钩子、移除插件记录（工具条目保留——名字覆盖语义，重挂同名插件自然
+覆盖；历史条目不在预设工具集里就不可达，不影响解析）。
+
+#### 27.5.3 查询与校验
+
+| 方法 | 作用 |
+|---|---|
+| `list_models() ... list_uis()` | 各命名空间名字排序列表 |
+| `list_components(kind=None)` | 组件清单：给 kind 返回该 kind 的名字列表，否则返回全部分组 |
+| `tool_schemas(names=None)` | 导出工具的 OpenAI 函数 schema 列表（缺省全部） |
+| `validate_preset(preset)` | 校验预设引用的组件是否齐全，返回 `(missing, missing_tools)`；空列表 = 可用 |
+
+`validate_preset` 检查 model / session / sandbox / scheduler / ui /
+components / tools 全部分支，缺失项格式 `"model=openai_compat"`、
+`"component=vector_store:pg"`，便于直接阅读与排错；AgentRuntime 构造时
+也会先跑它，缺失直接 `ComponentError`（快速失败）。
+
+#### 27.5.4 线程安全与错误语义
+
+- 全部读写走 `threading.RLock()`，注册 / 解析跨线程安全；
+- 未注册 / 类型不符 → `ComponentError`（错误消息带可用名字列表）；
+- `register_preset` 只收 `Preset` 实例，否则 `ComponentError`。
+
+#### 27.5.5 与 EventBus / ArchLayer 的关系
+
+```python
+reg = Registry()          # 内部自动创建 EventBus
+reg.bus                   # 总线本体（与 AgentRuntime 共享同一实例）
+reg.hooks                 # 惰性创建 HookSystem(bus)：9 层钩子视图
+reg.security              # 安全上下文（norpagent.safe() 安装，整体可插拔）
+```
+
+装配侧（`runtime.mount`）：
+
+- `build_registry(layer)`：建注册表 + 安装内置默认（install_defaults）；
+- `apply_slot_overrides(reg, layer, ...)`：把槽位装配结果落到注册表
+  （预设字段覆盖、组件注册、自定义槽位 applier 调用），热挂载时反复调用——
+  **applier 必须重入安全**（用 `ctx["meta"]` 记录待退订对象，重复执行不叠加
+  副作用，25.10.3）。
+
+#### 27.5.6 使用示例
+
+```python
+from norpagent import Registry
+
+reg = Registry()
+reg.register_tool("clock", ClockTool())
+reg.register_session("memory", lambda: MemorySession())
+reg.register_component("context_store", "fts5", lambda: Fts5Store())
+
+sess = reg.build_session("memory")       # 每次新造
+tool = reg.resolve_tool("clock")         # 实例直取
+store = reg.build_component("context_store", "fts5")
+missing, missing_tools = reg.validate_preset(preset)
+assert missing == [] and missing_tools == []
+```
+
+### 27.6 四者协作：一次启动与热挂载走查
+
+#### 27.6.1 启动时序（npa() 内部）
+
+```
+1. ArchLayer(**slot_values)           槽位连接器接收全部槽位值（config + 关键字合并）
+2. mount_defaults(layer)              set_default 注册各槽位内置默认逻辑
+3. build_registry(layer)              建 Registry，install_defaults 安装内置组件
+4. apply_slot_overrides(reg, layer)   按优先级 任务级 > remount > 启动装配 > 预设
+                                      覆盖字段；组件注册、自定义槽位 applier 执行
+5. layer.connect()                    逐个槽位装配：
+                                      - 值 None   → 默认工厂（ctx 注入）
+                                      - 字符串    → resolve_address 解析 + call_factory
+                                        （按签名注入 layer / slot / config；
+                                         config 来自 ;key=value 子句）
+                                      - dict      → 键值对地址递归解析
+                                      - defer_factory 槽位只解析不实例化
+6. NorpEngine._build_agent()          引擎装配期：defer_factory 工厂调用（registry /
+                                      preset 上下文已就绪）→ AgentRuntime(reg, bus, ...)
+7. AgentRuntime 启动                  构造时：self.bus = registry.bus；
+                                      UI 挂总线（bus.subscribe(ui.on_event)，关闭时退订）；
+                                      发射 on_agent_init；任务执行 → emit / intercept
+```
+
+关键点：**槽位连接器负责「装」，注册表负责「记」，事件总线负责「通」，
+地址解析器负责「认」**——顺序上地址解析器最先被调用（在装配过程中），
+注册表在装配中期被填充，总线全程运行。
+
+#### 27.6.2 热挂载时序（npa.remount(slot, value)）
+
+```
+1. remount(slot, value)               槽位连接器：字符串地址先失效模块缓存
+                                      （删 .pyc + 弹 sys.modules）
+2. _connect_slot(slot)                重新解析 / 重新装配该槽位
+3. apply_slot_overrides 再次执行      同一注册表反复调用 → applier 重入安全
+                                      （旧订阅经 ctx["meta"] 退订，防止叠加）
+4. 插件类槽位                        unregister_plugin 退订旧钩子 → 重新注册新插件
+5. 生效时机                          remount_rebuild_agent=True 的槽位热重建
+                                      AgentRuntime；其余槽位下一次 run() 生效
+                                      或仅 extras 更新，无需重建
+```
+
+#### 27.6.3 四类异常的边界
+
+| 异常 | 抛出方 | 触发条件 | 处理建议 |
+|---|---|---|---|
+| `AddressError` | 地址解析器 | 地址导入失败 / 属性缺失 / 空地址 | 检查模块路径与属性名；形如地址的字符串绝不静默回落 |
+| `ComponentError` | 注册表 | 未注册 / 类型不符 / preset 类型不对 | 用 `list_*()` 查可用名字；检查命名空间是否放对 |
+| `SlotError` | 槽位表 | 非法槽位表操作（注册 / 注销 / 非法 spec） | 检查 SlotSpec 字段与保留名（prompt / config） |
+| `RuntimeError` | 槽位连接器 | 未 connect() 就取 `layer[slot]` | 先 `layer.connect()`；或改用 `layer.get(slot, default)` |
+
+#### 27.6.4 替换原则与检查清单
+
+替换任何组件的四条原则（与 26.8 呼应）：
+
+1. **改配置优先**：能 `npa(slot=...)` 或 `remount` 解决的，不动代码；
+2. **注册表优先**：新组件先 `register_*`，再在预设里引用；
+3. **地址形态优先**：`pkg.mod[:attr]` 同时获得工厂注入、`;key=value` 子句、
+   代码热重载三项能力，是推荐形态；
+4. **装配可观测**：交付前跑 `layer.describe()` 确认来源正确。
+
+自检清单：
+
+| # | 检查项 | 涉及组件 |
+|---|---|---|
+| 1 | `layer.connect()` 成功，`layer[slot]` 可取 | 槽位连接器 |
+| 2 | `layer.describe()` 显示来源（默认 / 地址 / 直接值） | 槽位连接器 |
+| 3 | 地址形态 `import myapp.xxx` 可导入、属性存在 | 地址解析器 |
+| 4 | 形如地址却解析失败抛 `AddressError`（红线） | 地址解析器 |
+| 5 | `reg.list_*()` 能看到、`resolve_*` 能取到 | 注册表 |
+| 6 | `validate_preset` 无缺失 | 注册表 |
+| 7 | 订阅后 `emit` 能收到；异常订阅者不打断主流程 | 事件总线 |
+| 8 | 可变钩子返回值生效；HookVeto 直达内核 | 事件总线 |
+| 9 | 改代码 → remount → 新代码生效 | 槽位连接器 + 地址解析器 |
+| 10 | applier 重入安全（重复 remount 不叠加副作用） | 槽位连接器 + 注册表 |
+
+---
+
 ## 附录 D　术语表
 
 | 术语 | 定义 |
@@ -5849,4 +6372,4 @@ eng.layer.describe()                # 装配清单：每个槽位从哪来（3 �
 
 ---
 
-*NorpAgent 开发手册 · v0.9.4 · Copyright (c) 2026 xingluosama121, MIT Licensed*
+*NorpAgent 开发手册 · v0.9.5 · Copyright (c) 2026 xingluosama121, MIT Licensed*
